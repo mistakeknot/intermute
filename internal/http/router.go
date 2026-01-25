@@ -11,7 +11,7 @@ func NewRouter(svc *Service, wsHandler http.Handler, mw func(http.Handler) http.
 		}
 		return handler
 	}
-	mux.Handle("/api/agents", wrap(svc.handleRegisterAgent))
+	mux.Handle("/api/agents", wrap(svc.handleAgents))
 	mux.Handle("/api/agents/", wrap(svc.handleAgentHeartbeat))
 	mux.Handle("/api/messages", wrap(svc.handleSendMessage))
 	mux.Handle("/api/messages/", wrap(svc.handleMessageAction))

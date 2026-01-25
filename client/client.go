@@ -48,6 +48,12 @@ type Agent struct {
 	Capabilities []string          `json:"capabilities,omitempty"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
 	Status       string            `json:"status,omitempty"`
+	LastSeen     string            `json:"last_seen,omitempty"`
+	CreatedAt    string            `json:"created_at,omitempty"`
+}
+
+type ListAgentsResponse struct {
+	Agents []Agent `json:"agents"`
 }
 
 type Message struct {
@@ -111,6 +117,32 @@ func (c *Client) Heartbeat(ctx context.Context, agentID string) error {
 		return fmt.Errorf("heartbeat failed: %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func (c *Client) ListAgents(ctx context.Context, project string) ([]Agent, error) {
+	values := url.Values{}
+	if project != "" {
+		values.Set("project", project)
+	} else if c.Project != "" {
+		values.Set("project", c.Project)
+	}
+	endpoint := "/api/agents"
+	if len(values) > 0 {
+		endpoint += "?" + values.Encode()
+	}
+	resp, err := c.get(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list agents failed: %d", resp.StatusCode)
+	}
+	var out ListAgentsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Agents, nil
 }
 
 func (c *Client) SendMessage(ctx context.Context, msg Message) (SendResponse, error) {

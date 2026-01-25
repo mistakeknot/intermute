@@ -55,3 +55,64 @@ func TestClientAppliesBearerAndProject(t *testing.T) {
 	default:
 	}
 }
+
+func TestClientListAgents(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/agents" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.Query().Get("project") != "proj-a" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"agents": []map[string]any{
+				{"agent_id": "a1", "name": "agent-1", "project": "proj-a"},
+				{"agent_id": "a2", "name": "agent-2", "project": "proj-a"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithProject("proj-a"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	agents, err := c.ListAgents(ctx, "")
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if len(agents) != 2 {
+		t.Fatalf("expected 2 agents, got %d", len(agents))
+	}
+	if agents[0].ID != "a1" {
+		t.Fatalf("expected a1, got %s", agents[0].ID)
+	}
+}
+
+func TestClientListAgentsWithExplicitProject(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("project") != "override" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"agents": []map[string]any{}})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithProject("default"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	_, err := c.ListAgents(ctx, "override")
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+}

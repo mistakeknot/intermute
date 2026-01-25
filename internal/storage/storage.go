@@ -14,6 +14,7 @@ type Store interface {
 	InboxSince(project, agent string, cursor uint64) ([]core.Message, error)
 	RegisterAgent(agent core.Agent) (core.Agent, error)
 	Heartbeat(agentID string) (core.Agent, error)
+	ListAgents(project string) ([]core.Agent, error)
 }
 
 // InMemory is a minimal in-memory store for tests.
@@ -93,4 +94,14 @@ func (m *InMemory) Heartbeat(agentID string) (core.Agent, error) {
 	agent.LastSeen = time.Now().UTC()
 	m.agents[agentID] = agent
 	return agent, nil
+}
+
+func (m *InMemory) ListAgents(project string) ([]core.Agent, error) {
+	var out []core.Agent
+	for _, agent := range m.agents {
+		if project == "" || agent.Project == project {
+			out = append(out, agent)
+		}
+	}
+	return out, nil
 }

@@ -35,3 +35,61 @@ func TestSQLiteProjectIsolation(t *testing.T) {
 		t.Fatalf("expected only proj-a messages, got %+v", msgsA)
 	}
 }
+
+func TestSQLiteListAgents(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Register agents in different projects
+	_, err := st.RegisterAgent(core.Agent{Name: "agent-a", Project: "proj-a", Status: "active"})
+	if err != nil {
+		t.Fatalf("register agent-a: %v", err)
+	}
+	_, err = st.RegisterAgent(core.Agent{Name: "agent-b", Project: "proj-b", Status: "idle"})
+	if err != nil {
+		t.Fatalf("register agent-b: %v", err)
+	}
+
+	// List all agents
+	all, err := st.ListAgents("")
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 agents, got %d", len(all))
+	}
+
+	// List by project
+	projA, err := st.ListAgents("proj-a")
+	if err != nil {
+		t.Fatalf("list proj-a: %v", err)
+	}
+	if len(projA) != 1 {
+		t.Fatalf("expected 1 agent in proj-a, got %d", len(projA))
+	}
+	if projA[0].Name != "agent-a" {
+		t.Fatalf("expected agent-a, got %s", projA[0].Name)
+	}
+}
+
+func TestSQLiteListAgentsOrderByLastSeen(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Register two agents
+	a1, _ := st.RegisterAgent(core.Agent{Name: "agent-first", Project: "proj"})
+	_, _ = st.RegisterAgent(core.Agent{Name: "agent-second", Project: "proj"})
+
+	// Heartbeat the first agent to make it more recent
+	_, _ = st.Heartbeat(a1.ID)
+
+	agents, err := st.ListAgents("proj")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(agents) != 2 {
+		t.Fatalf("expected 2 agents, got %d", len(agents))
+	}
+	// First agent should be first (most recent heartbeat)
+	if agents[0].Name != "agent-first" {
+		t.Fatalf("expected agent-first first (most recent), got %s", agents[0].Name)
+	}
+}

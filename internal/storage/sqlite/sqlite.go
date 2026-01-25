@@ -395,3 +395,52 @@ func (s *Store) Heartbeat(agentID string) (core.Agent, error) {
 		LastSeen:     lastSeenTime,
 	}, nil
 }
+
+func (s *Store) ListAgents(project string) ([]core.Agent, error) {
+	query := `SELECT id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen
+		FROM agents`
+	var args []any
+	if project != "" {
+		query += " WHERE project = ?"
+		args = append(args, project)
+	}
+	query += " ORDER BY last_seen DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query agents: %w", err)
+	}
+	defer rows.Close()
+
+	var out []core.Agent
+	for rows.Next() {
+		var (
+			id, sessionID, name, proj, capsJSON, metaJSON, status, createdAt, lastSeen string
+		)
+		if err := rows.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &createdAt, &lastSeen); err != nil {
+			return nil, fmt.Errorf("scan agent: %w", err)
+		}
+		var caps []string
+		_ = json.Unmarshal([]byte(capsJSON), &caps)
+		meta := map[string]string{}
+		_ = json.Unmarshal([]byte(metaJSON), &meta)
+		createdAtTime, _ := time.Parse(time.RFC3339Nano, createdAt)
+		lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
+
+		out = append(out, core.Agent{
+			ID:           id,
+			SessionID:    sessionID,
+			Name:         name,
+			Project:      proj,
+			Capabilities: caps,
+			Metadata:     meta,
+			Status:       status,
+			CreatedAt:    createdAtTime,
+			LastSeen:     lastSeenTime,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
