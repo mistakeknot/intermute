@@ -24,9 +24,19 @@ type sendMessageResponse struct {
 	Cursor    uint64 `json:"cursor"`
 }
 
+type apiMessage struct {
+	ID        string   `json:"id"`
+	ThreadID  string   `json:"thread_id"`
+	From      string   `json:"from"`
+	To        []string `json:"to"`
+	Body      string   `json:"body"`
+	CreatedAt string   `json:"created_at"`
+	Cursor    uint64   `json:"cursor"`
+}
+
 type inboxResponse struct {
-	Messages []core.Message `json:"messages"`
-	Cursor   uint64         `json:"cursor"`
+	Messages []apiMessage `json:"messages"`
+	Cursor   uint64       `json:"cursor"`
 }
 
 func (s *Service) handleSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -100,8 +110,20 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 	if len(msgs) > 0 {
 		lastCursor = msgs[len(msgs)-1].Cursor
 	}
+	apiMsgs := make([]apiMessage, 0, len(msgs))
+	for _, m := range msgs {
+		apiMsgs = append(apiMsgs, apiMessage{
+			ID:        m.ID,
+			ThreadID:  m.ThreadID,
+			From:      m.From,
+			To:        m.To,
+			Body:      m.Body,
+			CreatedAt: m.CreatedAt.Format(time.RFC3339Nano),
+			Cursor:    m.Cursor,
+		})
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(inboxResponse{Messages: msgs, Cursor: lastCursor})
+	_ = json.NewEncoder(w).Encode(inboxResponse{Messages: apiMsgs, Cursor: lastCursor})
 }
 
 func (s *Service) handleMessageAction(w http.ResponseWriter, r *http.Request) {

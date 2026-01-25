@@ -12,6 +12,20 @@ Coordination service for Autarch agents.
 go run ./cmd/intermute
 ```
 
+## Environment
+- `INTERMUTE_URL` (client-side) e.g. `http://localhost:7338`
+- `INTERMUTE_AGENT_NAME` (optional override)
+- `INTERMUTE_PROJECT` (optional)
+
+## API (MVP)
+- `POST /api/agents`
+- `POST /api/agents/{id}/heartbeat`
+- `POST /api/messages`
+- `GET /api/inbox/{agent}?since_cursor=...`
+- `POST /api/messages/{id}/ack`
+- `POST /api/messages/{id}/read`
+- `WS /ws/agents/{id}`
+
 ## Test
 ```
 go test ./...

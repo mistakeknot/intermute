@@ -32,6 +32,8 @@ type Message struct {
 	From     string   `json:"from"`
 	To       []string `json:"to"`
 	Body     string   `json:"body"`
+	CreatedAt string  `json:"created_at,omitempty"`
+	Cursor   uint64   `json:"cursor,omitempty"`
 }
 
 type SendResponse struct {
