@@ -77,6 +77,26 @@ type InboxResponse struct {
 	Cursor   uint64    `json:"cursor"`
 }
 
+type ThreadSummary struct {
+	ThreadID     string `json:"thread_id"`
+	LastCursor   uint64 `json:"last_cursor"`
+	MessageCount int    `json:"message_count"`
+	LastFrom     string `json:"last_from"`
+	LastBody     string `json:"last_body"`
+	LastAt       string `json:"last_at"`
+}
+
+type ListThreadsResponse struct {
+	Threads []ThreadSummary `json:"threads"`
+	Cursor  uint64          `json:"cursor"`
+}
+
+type ThreadMessagesResponse struct {
+	ThreadID string    `json:"thread_id"`
+	Messages []Message `json:"messages"`
+	Cursor   uint64    `json:"cursor"`
+}
+
 func New(baseURL string, opts ...Option) *Client {
 	c := &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
@@ -208,6 +228,51 @@ func (c *Client) messageAction(ctx context.Context, messageID, action string) er
 		return fmt.Errorf("%s failed: %d", action, resp.StatusCode)
 	}
 	return nil
+}
+
+func (c *Client) ListThreads(ctx context.Context, agent string, cursor uint64) (ListThreadsResponse, error) {
+	values := url.Values{}
+	values.Set("agent", agent)
+	values.Set("cursor", fmt.Sprintf("%d", cursor))
+	if c.Project != "" {
+		values.Set("project", c.Project)
+	}
+	endpoint := "/api/threads?" + values.Encode()
+	resp, err := c.get(ctx, endpoint)
+	if err != nil {
+		return ListThreadsResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ListThreadsResponse{}, fmt.Errorf("list threads failed: %d", resp.StatusCode)
+	}
+	var out ListThreadsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return ListThreadsResponse{}, err
+	}
+	return out, nil
+}
+
+func (c *Client) ThreadMessages(ctx context.Context, threadID string, cursor uint64) (ThreadMessagesResponse, error) {
+	values := url.Values{}
+	values.Set("cursor", fmt.Sprintf("%d", cursor))
+	if c.Project != "" {
+		values.Set("project", c.Project)
+	}
+	endpoint := "/api/threads/" + url.PathEscape(threadID) + "?" + values.Encode()
+	resp, err := c.get(ctx, endpoint)
+	if err != nil {
+		return ThreadMessagesResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ThreadMessagesResponse{}, fmt.Errorf("thread messages failed: %d", resp.StatusCode)
+	}
+	var out ThreadMessagesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return ThreadMessagesResponse{}, err
+	}
+	return out, nil
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, payload any) (*http.Response, error) {

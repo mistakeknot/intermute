@@ -1,7 +1,10 @@
 package sqlite
 
 import (
+	"database/sql"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/mistakeknot/intermute/internal/core"
 )
@@ -91,5 +94,226 @@ func TestSQLiteListAgentsOrderByLastSeen(t *testing.T) {
 	// First agent should be first (most recent heartbeat)
 	if agents[0].Name != "agent-first" {
 		t.Fatalf("expected agent-first first (most recent), got %s", agents[0].Name)
+	}
+}
+
+func TestSQLiteThreadMessages(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Create messages in a thread
+	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		ID: "m1", ThreadID: "thread-1", Project: "proj", From: "alice", To: []string{"bob"}, Body: "Hello",
+	}})
+	c2, _ := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		ID: "m2", ThreadID: "thread-1", Project: "proj", From: "bob", To: []string{"alice"}, Body: "Hi back",
+	}})
+	// Message in different thread
+	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		ID: "m3", ThreadID: "thread-2", Project: "proj", From: "alice", To: []string{"bob"}, Body: "Other thread",
+	}})
+
+	// Get all messages in thread-1
+	msgs, err := st.ThreadMessages("proj", "thread-1", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if msgs[0].ID != "m1" || msgs[1].ID != "m2" {
+		t.Fatalf("wrong message order: %s, %s", msgs[0].ID, msgs[1].ID)
+	}
+
+	// Get messages after cursor
+	msgs, err = st.ThreadMessages("proj", "thread-1", c2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected 0 messages after cursor, got %d", len(msgs))
+	}
+}
+
+func TestSQLiteListThreads(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Create messages in threads
+	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		ID: "m1", ThreadID: "thread-1", Project: "proj", From: "alice", To: []string{"bob"}, Body: "Hello",
+	}})
+	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		ID: "m2", ThreadID: "thread-1", Project: "proj", From: "bob", To: []string{"alice"}, Body: "Hi back",
+	}})
+	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		ID: "m3", ThreadID: "thread-2", Project: "proj", From: "alice", To: []string{"bob"}, Body: "Another thread",
+	}})
+
+	// List threads for bob
+	threads, err := st.ListThreads("proj", "bob", 0, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(threads) != 2 {
+		t.Fatalf("expected 2 threads, got %d", len(threads))
+	}
+	// Most recent first
+	if threads[0].ThreadID != "thread-2" {
+		t.Fatalf("expected thread-2 first (most recent), got %s", threads[0].ThreadID)
+	}
+	if threads[1].MessageCount != 2 {
+		t.Fatalf("expected 2 messages in thread-1, got %d", threads[1].MessageCount)
+	}
+}
+
+func TestSQLiteThreadProjectIsolation(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Create threads in different projects
+	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		ID: "m1", ThreadID: "thread-1", Project: "proj-a", From: "alice", To: []string{"bob"}, Body: "Proj A",
+	}})
+	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		ID: "m2", ThreadID: "thread-1", Project: "proj-b", From: "alice", To: []string{"bob"}, Body: "Proj B",
+	}})
+
+	// List threads should be isolated by project
+	threadsA, err := st.ListThreads("proj-a", "bob", 0, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(threadsA) != 1 {
+		t.Fatalf("expected 1 thread in proj-a, got %d", len(threadsA))
+	}
+
+	threadsB, err := st.ListThreads("proj-b", "bob", 0, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(threadsB) != 1 {
+		t.Fatalf("expected 1 thread in proj-b, got %d", len(threadsB))
+	}
+}
+
+func TestSQLiteThreadPagination(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Create multiple threads
+	var lastCursor uint64
+	for i := 1; i <= 5; i++ {
+		c, _ := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+			ID: "m" + string(rune('0'+i)), ThreadID: "thread-" + string(rune('0'+i)), Project: "proj", From: "alice", To: []string{"bob"}, Body: "Message",
+		}})
+		if i == 3 {
+			lastCursor = c
+		}
+	}
+
+	// Get threads with limit
+	threads, err := st.ListThreads("proj", "bob", 0, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(threads) != 2 {
+		t.Fatalf("expected 2 threads with limit, got %d", len(threads))
+	}
+
+	// Get threads after cursor
+	threads, err = st.ListThreads("proj", "bob", lastCursor, 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(threads) != 2 {
+		t.Fatalf("expected 2 threads after cursor %d, got %d", lastCursor, len(threads))
+	}
+}
+
+func TestSQLiteThreadPaginationCursorFromPage(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Create multiple threads with increasing cursors.
+	for i := 1; i <= 5; i++ {
+		_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+			ID: "m" + string(rune('0'+i)), ThreadID: "thread-" + string(rune('0'+i)), Project: "proj", From: "alice", To: []string{"bob"}, Body: "Message",
+		}})
+	}
+
+	firstPage, err := st.ListThreads("proj", "bob", 0, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(firstPage) != 2 {
+		t.Fatalf("expected 2 threads on first page, got %d", len(firstPage))
+	}
+
+	// Use the last item on the page as the next cursor.
+	nextCursor := firstPage[len(firstPage)-1].LastCursor
+	secondPage, err := st.ListThreads("proj", "bob", nextCursor, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(secondPage) != 2 {
+		t.Fatalf("expected 2 threads on second page after cursor %d, got %d", nextCursor, len(secondPage))
+	}
+	if secondPage[0].LastCursor >= nextCursor {
+		t.Fatalf("expected older threads after cursor %d, got cursor %d", nextCursor, secondPage[0].LastCursor)
+	}
+}
+
+func TestSQLiteThreadBackfillIncludesSender(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "intermute.db")
+
+	// Seed a pre-thread_index database, then let migrations/backfill run.
+	rawDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	if _, err := rawDB.Exec(schema); err != nil {
+		t.Fatalf("seed schema: %v", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := rawDB.Exec(
+		`INSERT INTO events (cursor, id, type, agent, project, message_id, thread_id, from_agent, to_json, body, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		1, "e1", string(core.EventMessageCreated), "alice", "proj", "m1", "thread-1", "alice", `["bob"]`, "Hello", now,
+	); err != nil {
+		t.Fatalf("seed events: %v", err)
+	}
+	if _, err := rawDB.Exec(
+		`INSERT INTO messages (project, message_id, thread_id, from_agent, to_json, body, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"proj", "m1", "thread-1", "alice", `["bob"]`, "Hello", now,
+	); err != nil {
+		t.Fatalf("seed messages: %v", err)
+	}
+	if _, err := rawDB.Exec(
+		`INSERT INTO inbox_index (project, agent, cursor, message_id)
+		 VALUES (?, ?, ?, ?)`,
+		"proj", "bob", 1, "m1",
+	); err != nil {
+		t.Fatalf("seed inbox: %v", err)
+	}
+	_ = rawDB.Close()
+
+	st, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.db.Close()
+
+	threadsBob, err := st.ListThreads("proj", "bob", 0, 10)
+	if err != nil {
+		t.Fatalf("list threads for bob: %v", err)
+	}
+	if len(threadsBob) != 1 {
+		t.Fatalf("expected bob to see 1 thread, got %d", len(threadsBob))
+	}
+
+	threadsAlice, err := st.ListThreads("proj", "alice", 0, 10)
+	if err != nil {
+		t.Fatalf("list threads for alice: %v", err)
+	}
+	if len(threadsAlice) != 1 {
+		t.Fatalf("expected sender alice to see 1 thread after backfill, got %d", len(threadsAlice))
 	}
 }

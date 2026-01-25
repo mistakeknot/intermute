@@ -43,3 +43,115 @@ CREATE TABLE IF NOT EXISTS agents (
   created_at TEXT NOT NULL,
   last_seen TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS thread_index (
+  project TEXT NOT NULL DEFAULT '',
+  thread_id TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  last_cursor INTEGER NOT NULL,
+  message_count INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (project, thread_id, agent)
+);
+
+CREATE INDEX IF NOT EXISTS idx_thread_agent_cursor
+  ON thread_index(project, agent, last_cursor DESC);
+
+CREATE INDEX IF NOT EXISTS idx_messages_thread
+  ON messages(project, thread_id, created_at);
+
+-- Domain tables for Autarch integration
+
+CREATE TABLE IF NOT EXISTS specs (
+  id TEXT NOT NULL,
+  project TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL,
+  vision TEXT,
+  users TEXT,
+  problem TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_specs_status ON specs(project, status);
+
+CREATE TABLE IF NOT EXISTS epics (
+  id TEXT NOT NULL,
+  project TEXT NOT NULL DEFAULT '',
+  spec_id TEXT,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_epics_spec ON epics(project, spec_id);
+CREATE INDEX IF NOT EXISTS idx_epics_status ON epics(project, status);
+
+CREATE TABLE IF NOT EXISTS stories (
+  id TEXT NOT NULL,
+  project TEXT NOT NULL DEFAULT '',
+  epic_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  acceptance_criteria_json TEXT,
+  status TEXT NOT NULL DEFAULT 'todo',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stories_epic ON stories(project, epic_id);
+CREATE INDEX IF NOT EXISTS idx_stories_status ON stories(project, status);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT NOT NULL,
+  project TEXT NOT NULL DEFAULT '',
+  story_id TEXT,
+  title TEXT NOT NULL,
+  agent TEXT,
+  session_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_story ON tasks(project, story_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(project, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_agent ON tasks(project, agent);
+
+CREATE TABLE IF NOT EXISTS insights (
+  id TEXT NOT NULL,
+  project TEXT NOT NULL DEFAULT '',
+  spec_id TEXT,
+  source TEXT NOT NULL,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  url TEXT,
+  score REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (project, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_insights_spec ON insights(project, spec_id);
+CREATE INDEX IF NOT EXISTS idx_insights_category ON insights(project, category);
+CREATE INDEX IF NOT EXISTS idx_insights_source ON insights(project, source);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT NOT NULL,
+  project TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL,
+  agent TEXT NOT NULL,
+  task_id TEXT,
+  status TEXT NOT NULL DEFAULT 'running',
+  started_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(project, status);
+CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(project, agent);

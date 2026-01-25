@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mistakeknot/intermute/internal/core"
+	"github.com/mistakeknot/intermute/internal/storage"
 )
 
 //go:embed schema.sql
@@ -59,6 +60,9 @@ func applySchema(db *sql.DB) error {
 		return err
 	}
 	if err := migrateInboxIndex(db); err != nil {
+		return err
+	}
+	if err := migrateThreadIndex(db); err != nil {
 		return err
 	}
 	return nil
@@ -109,6 +113,22 @@ func (s *Store) AppendEvent(ev core.Event) (uint64, error) {
 				project, agent, cursor, ev.Message.ID,
 			); err != nil {
 				return 0, fmt.Errorf("insert inbox: %w", err)
+			}
+		}
+		// Update thread_index if message has a thread ID
+		if ev.Message.ThreadID != "" {
+			participants := append([]string{ev.Message.From}, recipients...)
+			for _, agent := range participants {
+				if _, err := s.db.Exec(
+					`INSERT INTO thread_index (project, thread_id, agent, last_cursor, message_count)
+					 VALUES (?, ?, ?, ?, 1)
+					 ON CONFLICT(project, thread_id, agent) DO UPDATE SET
+					   last_cursor = excluded.last_cursor,
+					   message_count = thread_index.message_count + 1`,
+					project, ev.Message.ThreadID, agent, cursor,
+				); err != nil {
+					return 0, fmt.Errorf("upsert thread_index: %w", err)
+				}
 			}
 		}
 	}
@@ -175,6 +195,103 @@ func (s *Store) InboxSince(project, agent string, cursor uint64) ([]core.Message
 			Body:      body,
 			CreatedAt: parsed,
 			Cursor:    uint64(cur),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Store) ThreadMessages(project, threadID string, cursor uint64) ([]core.Message, error) {
+	query := `SELECT i.cursor, m.project, m.message_id, m.thread_id, m.from_agent, m.to_json, m.body, m.created_at
+	 FROM inbox_index i
+	 JOIN messages m ON m.project = i.project AND m.message_id = i.message_id
+	 WHERE m.project = ? AND m.thread_id = ? AND i.cursor > ?
+	 GROUP BY m.message_id
+	 ORDER BY m.created_at ASC`
+	rows, err := s.db.Query(query, project, threadID, cursor)
+	if err != nil {
+		return nil, fmt.Errorf("query thread: %w", err)
+	}
+	defer rows.Close()
+
+	var out []core.Message
+	for rows.Next() {
+		var (
+			cur                                                   int64
+			proj                                                  string
+			msgID, thID, fromAgent, toJSON, body, createdAt       string
+		)
+		if err := rows.Scan(&cur, &proj, &msgID, &thID, &fromAgent, &toJSON, &body, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan thread: %w", err)
+		}
+		var to []string
+		_ = json.Unmarshal([]byte(toJSON), &to)
+		parsed, _ := time.Parse(time.RFC3339Nano, createdAt)
+		out = append(out, core.Message{
+			ID:        msgID,
+			ThreadID:  thID,
+			Project:   proj,
+			From:      fromAgent,
+			To:        to,
+			Body:      body,
+			CreatedAt: parsed,
+			Cursor:    uint64(cur),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Store) ListThreads(project, agent string, cursor uint64, limit int) ([]storage.ThreadSummary, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	query := `SELECT t.thread_id, t.last_cursor, t.message_count, m.from_agent, m.body, m.created_at
+	 FROM thread_index t
+	 JOIN messages m ON m.project = t.project AND m.thread_id = t.thread_id
+	 WHERE t.project = ? AND t.agent = ?`
+	args := []any{project, agent}
+	// With DESC ordering, cursor represents an upper bound for older pages.
+	if cursor > 0 {
+		query += " AND t.last_cursor < ?"
+		args = append(args, cursor)
+	}
+	query += `
+	 AND m.created_at = (
+	   SELECT MAX(m2.created_at) FROM messages m2
+	   WHERE m2.project = t.project AND m2.thread_id = t.thread_id
+	 )
+	 ORDER BY t.last_cursor DESC
+	 LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query threads: %w", err)
+	}
+	defer rows.Close()
+
+	var out []storage.ThreadSummary
+	for rows.Next() {
+		var (
+			threadID, lastFrom, lastBody, lastAt string
+			lastCursor                           int64
+			messageCount                         int
+		)
+		if err := rows.Scan(&threadID, &lastCursor, &messageCount, &lastFrom, &lastBody, &lastAt); err != nil {
+			return nil, fmt.Errorf("scan thread: %w", err)
+		}
+		parsed, _ := time.Parse(time.RFC3339Nano, lastAt)
+		out = append(out, storage.ThreadSummary{
+			ThreadID:     threadID,
+			LastCursor:   uint64(lastCursor),
+			MessageCount: messageCount,
+			LastFrom:     lastFrom,
+			LastBody:     lastBody,
+			LastAt:       parsed,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -266,6 +383,43 @@ func migrateInboxIndex(db *sql.DB) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit migrate inbox: %w", err)
+	}
+	return nil
+}
+
+func migrateThreadIndex(db *sql.DB) error {
+	// Backfill thread_index from existing messages with thread_id
+	if !tableExists(db, "thread_index") {
+		return nil
+	}
+	// Check if there are already entries - if so, skip backfill
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM thread_index`).Scan(&count); err != nil {
+		return fmt.Errorf("count thread_index: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	// Backfill from messages that have thread_id
+	_, err := db.Exec(`
+		WITH participants AS (
+			SELECT m.project, m.thread_id, i.agent AS agent, i.cursor AS cursor, m.message_id
+			FROM messages m
+			JOIN inbox_index i ON i.project = m.project AND i.message_id = m.message_id
+			WHERE m.thread_id IS NOT NULL AND m.thread_id != ''
+			UNION ALL
+			SELECT m.project, m.thread_id, m.from_agent AS agent, e.cursor AS cursor, m.message_id
+			FROM messages m
+			JOIN events e ON e.project = m.project AND e.message_id = m.message_id AND e.type = ?
+			WHERE m.thread_id IS NOT NULL AND m.thread_id != '' AND m.from_agent IS NOT NULL AND m.from_agent != ''
+		)
+		INSERT INTO thread_index (project, thread_id, agent, last_cursor, message_count)
+		SELECT project, thread_id, agent, MAX(cursor), COUNT(DISTINCT message_id)
+		FROM participants
+		GROUP BY project, thread_id, agent
+	`, string(core.EventMessageCreated))
+	if err != nil {
+		return fmt.Errorf("backfill thread_index: %w", err)
 	}
 	return nil
 }
