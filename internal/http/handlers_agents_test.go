@@ -12,7 +12,7 @@ import (
 
 func TestRegisterAgent(t *testing.T) {
 	svc := NewService(storage.NewInMemory())
-	srv := httptest.NewServer(NewRouter(svc))
+	srv := httptest.NewServer(NewRouter(svc, nil))
 	defer srv.Close()
 
 	payload := map[string]any{"name": "agent-a"}

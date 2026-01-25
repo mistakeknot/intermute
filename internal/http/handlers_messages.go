@@ -60,6 +60,16 @@ func (s *Service) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	if s.bus != nil {
+		for _, agent := range msg.To {
+			s.bus.Broadcast(agent, map[string]any{
+				"type":       string(core.EventMessageCreated),
+				"message_id": msgID,
+				"cursor":     cursor,
+				"agent":      agent,
+			})
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(sendMessageResponse{MessageID: msgID, Cursor: cursor})
 }
@@ -121,6 +131,12 @@ func (s *Service) handleMessageAction(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
+	}
+	if s.bus != nil {
+		s.bus.Broadcast("", map[string]any{
+			"type":       string(evType),
+			"message_id": msgID,
+		})
 	}
 	w.WriteHeader(http.StatusOK)
 }

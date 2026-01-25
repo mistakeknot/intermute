@@ -16,7 +16,7 @@ func TestSendMessageAndFetchInbox(t *testing.T) {
 		t.Fatalf("sqlite: %v", err)
 	}
 	svc := NewService(st)
-	srv := httptest.NewServer(NewRouter(svc))
+	srv := httptest.NewServer(NewRouter(svc, nil))
 	defer srv.Close()
 
 	payload := map[string]any{
