@@ -42,10 +42,12 @@ type Event struct {
 
 type Agent struct {
 	ID           string
+	SessionID    string
 	Name         string
 	Project      string
 	Capabilities []string
 	Metadata     map[string]string
 	Status       string
 	LastSeen     time.Time
+	CreatedAt    time.Time
 }

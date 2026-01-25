@@ -155,3 +155,69 @@ func (s *Store) InboxSince(agent string, cursor uint64) ([]core.Message, error) 
 	}
 	return out, nil
 }
+
+func (s *Store) RegisterAgent(agent core.Agent) (core.Agent, error) {
+	if agent.ID == "" {
+		agent.ID = uuid.NewString()
+	}
+	if agent.SessionID == "" {
+		agent.SessionID = uuid.NewString()
+	}
+	now := time.Now().UTC()
+	if agent.CreatedAt.IsZero() {
+		agent.CreatedAt = now
+	}
+	if agent.LastSeen.IsZero() {
+		agent.LastSeen = now
+	}
+
+	capsJSON, _ := json.Marshal(agent.Capabilities)
+	metaJSON, _ := json.Marshal(agent.Metadata)
+
+	_, err := s.db.Exec(
+		`INSERT INTO agents (id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, name=excluded.name, project=excluded.project,
+		 capabilities_json=excluded.capabilities_json, metadata_json=excluded.metadata_json, status=excluded.status, last_seen=excluded.last_seen`,
+		agent.ID, agent.SessionID, agent.Name, agent.Project, string(capsJSON), string(metaJSON), agent.Status,
+		agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return core.Agent{}, fmt.Errorf("register agent: %w", err)
+	}
+	return agent, nil
+}
+
+func (s *Store) Heartbeat(agentID string) (core.Agent, error) {
+	now := time.Now().UTC()
+	_, err := s.db.Exec(`UPDATE agents SET last_seen=? WHERE id=?`, now.Format(time.RFC3339Nano), agentID)
+	if err != nil {
+		return core.Agent{}, fmt.Errorf("heartbeat: %w", err)
+	}
+
+	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen FROM agents WHERE id=?`, agentID)
+	var (
+		id, sessionID, name, project, capsJSON, metaJSON, status, createdAt, lastSeen string
+	)
+	if err := row.Scan(&id, &sessionID, &name, &project, &capsJSON, &metaJSON, &status, &createdAt, &lastSeen); err != nil {
+		return core.Agent{}, fmt.Errorf("heartbeat fetch: %w", err)
+	}
+	var caps []string
+	_ = json.Unmarshal([]byte(capsJSON), &caps)
+	meta := map[string]string{}
+	_ = json.Unmarshal([]byte(metaJSON), &meta)
+	createdAtTime, _ := time.Parse(time.RFC3339Nano, createdAt)
+	lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
+
+	return core.Agent{
+		ID:           id,
+		SessionID:    sessionID,
+		Name:         name,
+		Project:      project,
+		Capabilities: caps,
+		Metadata:     meta,
+		Status:       status,
+		CreatedAt:    createdAtTime,
+		LastSeen:     lastSeenTime,
+	}, nil
+}
