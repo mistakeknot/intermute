@@ -8,6 +8,7 @@ import (
 
 	"github.com/mistakeknot/intermute/internal/auth"
 	"github.com/mistakeknot/intermute/internal/core"
+	"github.com/mistakeknot/intermute/internal/names"
 )
 
 type registerAgentRequest struct {
@@ -21,6 +22,7 @@ type registerAgentRequest struct {
 type registerAgentResponse struct {
 	AgentID   string `json:"agent_id"`
 	SessionID string `json:"session_id"`
+	Name      string `json:"name"`
 	Cursor    uint64 `json:"cursor"`
 }
 
@@ -96,8 +98,7 @@ func (s *Service) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.Name) == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		req.Name = names.Generate()
 	}
 	info, _ := auth.FromContext(r.Context())
 	if info.Mode == auth.ModeAPIKey {
@@ -130,6 +131,7 @@ func (s *Service) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(registerAgentResponse{
 		AgentID:   agent.ID,
 		SessionID: agent.SessionID,
+		Name:      agent.Name,
 		Cursor:    0,
 	})
 }
