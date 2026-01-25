@@ -14,6 +14,30 @@ import (
 type Client struct {
 	BaseURL string
 	HTTP    *http.Client
+	APIKey  string
+	Project string
+}
+
+type Option func(*Client)
+
+func WithAPIKey(key string) Option {
+	return func(c *Client) {
+		c.APIKey = strings.TrimSpace(key)
+	}
+}
+
+func WithProject(project string) Option {
+	return func(c *Client) {
+		c.Project = strings.TrimSpace(project)
+	}
+}
+
+func WithHTTPClient(httpClient *http.Client) Option {
+	return func(c *Client) {
+		if httpClient != nil {
+			c.HTTP = httpClient
+		}
+	}
 }
 
 type Agent struct {
@@ -27,13 +51,14 @@ type Agent struct {
 }
 
 type Message struct {
-	ID       string   `json:"id,omitempty"`
-	ThreadID string   `json:"thread_id,omitempty"`
-	From     string   `json:"from"`
-	To       []string `json:"to"`
-	Body     string   `json:"body"`
-	CreatedAt string  `json:"created_at,omitempty"`
-	Cursor   uint64   `json:"cursor,omitempty"`
+	ID        string   `json:"id,omitempty"`
+	ThreadID  string   `json:"thread_id,omitempty"`
+	Project   string   `json:"project,omitempty"`
+	From      string   `json:"from"`
+	To        []string `json:"to"`
+	Body      string   `json:"body"`
+	CreatedAt string   `json:"created_at,omitempty"`
+	Cursor    uint64   `json:"cursor,omitempty"`
 }
 
 type SendResponse struct {
@@ -46,11 +71,21 @@ type InboxResponse struct {
 	Cursor   uint64    `json:"cursor"`
 }
 
-func New(baseURL string) *Client {
-	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), HTTP: &http.Client{Timeout: 10 * time.Second}}
+func New(baseURL string, opts ...Option) *Client {
+	c := &Client{
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		HTTP:    &http.Client{Timeout: 10 * time.Second},
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 func (c *Client) RegisterAgent(ctx context.Context, agent Agent) (Agent, error) {
+	if agent.Project == "" {
+		agent.Project = c.Project
+	}
 	resp, err := c.postJSON(ctx, "/api/agents", agent)
 	if err != nil {
 		return Agent{}, err
@@ -79,6 +114,9 @@ func (c *Client) Heartbeat(ctx context.Context, agentID string) error {
 }
 
 func (c *Client) SendMessage(ctx context.Context, msg Message) (SendResponse, error) {
+	if msg.Project == "" {
+		msg.Project = c.Project
+	}
 	resp, err := c.postJSON(ctx, "/api/messages", msg)
 	if err != nil {
 		return SendResponse{}, err
@@ -95,7 +133,12 @@ func (c *Client) SendMessage(ctx context.Context, msg Message) (SendResponse, er
 }
 
 func (c *Client) InboxSince(ctx context.Context, agent string, cursor uint64) (InboxResponse, error) {
-	endpoint := fmt.Sprintf("/api/inbox/%s?since_cursor=%d", url.PathEscape(agent), cursor)
+	values := url.Values{}
+	values.Set("since_cursor", fmt.Sprintf("%d", cursor))
+	if c.Project != "" {
+		values.Set("project", c.Project)
+	}
+	endpoint := fmt.Sprintf("/api/inbox/%s?%s", url.PathEscape(agent), values.Encode())
 	resp, err := c.get(ctx, endpoint)
 	if err != nil {
 		return InboxResponse{}, err
@@ -120,7 +163,11 @@ func (c *Client) Read(ctx context.Context, messageID string) error {
 }
 
 func (c *Client) messageAction(ctx context.Context, messageID, action string) error {
-	resp, err := c.postJSON(ctx, "/api/messages/"+url.PathEscape(messageID)+"/"+action, map[string]string{})
+	endpoint := "/api/messages/" + url.PathEscape(messageID) + "/" + action
+	if c.Project != "" {
+		endpoint += "?project=" + url.QueryEscape(c.Project)
+	}
+	resp, err := c.postJSON(ctx, endpoint, map[string]string{})
 	if err != nil {
 		return err
 	}
@@ -140,6 +187,7 @@ func (c *Client) postJSON(ctx context.Context, path string, payload any) (*http.
 	if err != nil {
 		return nil, err
 	}
+	c.applyHeaders(req)
 	req.Header.Set("Content-Type", "application/json")
 	return c.HTTP.Do(req)
 }
@@ -149,5 +197,12 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.applyHeaders(req)
 	return c.HTTP.Do(req)
+}
+
+func (c *Client) applyHeaders(req *http.Request) {
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 }

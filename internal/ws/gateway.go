@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mistakeknot/intermute/internal/auth"
 	"nhooyr.io/websocket"
 	"nhooyr.io/websocket/wsjson"
 )
@@ -15,11 +16,11 @@ const writeTimeout = 5 * time.Second
 
 type Hub struct {
 	mu    sync.Mutex
-	conns map[string]map[*websocket.Conn]struct{}
+	conns map[string]map[string]map[*websocket.Conn]struct{}
 }
 
 func NewHub() *Hub {
-	return &Hub{conns: make(map[string]map[*websocket.Conn]struct{})}
+	return &Hub{conns: make(map[string]map[string]map[*websocket.Conn]struct{})}
 }
 
 func (h *Hub) Handler() http.HandlerFunc {
@@ -30,12 +31,24 @@ func (h *Hub) Handler() http.HandlerFunc {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		requestedProject := strings.TrimSpace(r.URL.Query().Get("project"))
+		info, _ := auth.FromContext(r.Context())
+		project := info.Project
+		if info.Mode == auth.ModeAPIKey {
+			if requestedProject != "" && requestedProject != project {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+		} else if project == "" {
+			project = requestedProject
+		}
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
 		}
-		h.add(agent, conn)
-		defer h.remove(agent, conn)
+
+		h.add(project, agent, conn)
+		defer h.remove(project, agent, conn)
 
 		ctx := r.Context()
 		for {
@@ -47,8 +60,8 @@ func (h *Hub) Handler() http.HandlerFunc {
 	}
 }
 
-func (h *Hub) Broadcast(agent string, event any) {
-	conns := h.snapshot(agent)
+func (h *Hub) Broadcast(project, agent string, event any) {
+	conns := h.snapshot(project, agent)
 	if len(conns) == 0 {
 		return
 	}
@@ -59,44 +72,67 @@ func (h *Hub) Broadcast(agent string, event any) {
 	}
 }
 
-func (h *Hub) snapshot(agent string) []*websocket.Conn {
+func (h *Hub) snapshot(project, agent string) []*websocket.Conn {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var out []*websocket.Conn
-	if agent != "" {
-		for conn := range h.conns[agent] {
+	collectAgent := func(m map[string]map[*websocket.Conn]struct{}, target string) {
+		if target == "" {
+			for _, conns := range m {
+				for conn := range conns {
+					out = append(out, conn)
+				}
+			}
+			return
+		}
+		for conn := range m[target] {
 			out = append(out, conn)
+		}
+	}
+	if project != "" {
+		if perAgent, ok := h.conns[project]; ok {
+			collectAgent(perAgent, agent)
 		}
 		return out
 	}
-	for _, m := range h.conns {
-		for conn := range m {
-			out = append(out, conn)
-		}
+	for _, perAgent := range h.conns {
+		collectAgent(perAgent, agent)
 	}
 	return out
 }
 
-func (h *Hub) add(agent string, conn *websocket.Conn) {
+func (h *Hub) add(project, agent string, conn *websocket.Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	m, ok := h.conns[agent]
+	perProject, ok := h.conns[project]
 	if !ok {
-		m = make(map[*websocket.Conn]struct{})
-		h.conns[agent] = m
+		perProject = make(map[string]map[*websocket.Conn]struct{})
+		h.conns[project] = perProject
 	}
-	m[conn] = struct{}{}
+	perAgent, ok := perProject[agent]
+	if !ok {
+		perAgent = make(map[*websocket.Conn]struct{})
+		perProject[agent] = perAgent
+	}
+	perAgent[conn] = struct{}{}
 }
 
-func (h *Hub) remove(agent string, conn *websocket.Conn) {
+func (h *Hub) remove(project, agent string, conn *websocket.Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	m, ok := h.conns[agent]
+	perProject, ok := h.conns[project]
 	if !ok {
 		return
 	}
-	delete(m, conn)
-	if len(m) == 0 {
-		delete(h.conns, agent)
+	perAgent, ok := perProject[agent]
+	if !ok {
+		return
+	}
+	delete(perAgent, conn)
+	if len(perAgent) == 0 {
+		delete(perProject, agent)
+	}
+	if len(perProject) == 0 {
+		delete(h.conns, project)
 	}
 }

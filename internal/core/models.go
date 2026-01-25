@@ -19,6 +19,7 @@ type Attachment struct {
 type Message struct {
 	ID          string
 	ThreadID    string
+	Project     string
 	From        string
 	To          []string
 	Body        string
@@ -35,6 +36,7 @@ type Event struct {
 	ID        string
 	Type      EventType
 	Agent     string
+	Project   string
 	Message   Message
 	CreatedAt time.Time
 	Cursor    uint64

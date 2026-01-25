@@ -2,21 +2,23 @@ package httpapi
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mistakeknot/intermute/internal/auth"
 	"github.com/mistakeknot/intermute/internal/core"
 )
 
 type sendMessageRequest struct {
+	ID       string   `json:"id"`
+	ThreadID string   `json:"thread_id"`
+	Project  string   `json:"project"`
 	From     string   `json:"from"`
 	To       []string `json:"to"`
 	Body     string   `json:"body"`
-	ThreadID string   `json:"thread_id"`
-	ID       string   `json:"id"`
 }
 
 type sendMessageResponse struct {
@@ -27,6 +29,7 @@ type sendMessageResponse struct {
 type apiMessage struct {
 	ID        string   `json:"id"`
 	ThreadID  string   `json:"thread_id"`
+	Project   string   `json:"project"`
 	From      string   `json:"from"`
 	To        []string `json:"to"`
 	Body      string   `json:"body"`
@@ -53,27 +56,42 @@ func (s *Service) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	info, _ := auth.FromContext(r.Context())
+	if info.Mode == auth.ModeAPIKey {
+		if strings.TrimSpace(req.Project) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if req.Project != info.Project {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+	}
+
 	msgID := req.ID
 	if msgID == "" {
 		msgID = uuid.NewString()
 	}
+	project := strings.TrimSpace(req.Project)
 	msg := core.Message{
 		ID:        msgID,
 		ThreadID:  req.ThreadID,
+		Project:   project,
 		From:      req.From,
 		To:        req.To,
 		Body:      req.Body,
 		CreatedAt: time.Now().UTC(),
 	}
-	cursor, err := s.store.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: msg})
+	cursor, err := s.store.AppendEvent(core.Event{Type: core.EventMessageCreated, Project: project, Message: msg})
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	if s.bus != nil {
 		for _, agent := range msg.To {
-			s.bus.Broadcast(agent, map[string]any{
+			s.bus.Broadcast(project, agent, map[string]any{
 				"type":       string(core.EventMessageCreated),
+				"project":    project,
 				"message_id": msgID,
 				"cursor":     cursor,
 				"agent":      agent,
@@ -95,13 +113,18 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	info, _ := auth.FromContext(r.Context())
+	project := info.Project
+	if project == "" {
+		project = strings.TrimSpace(r.URL.Query().Get("project"))
+	}
 	cursor := uint64(0)
 	if v := r.URL.Query().Get("since_cursor"); v != "" {
-		var parsed uint64
-		_, _ = fmt.Sscanf(v, "%d", &parsed)
-		cursor = parsed
+		if parsed, err := strconv.ParseUint(v, 10, 64); err == nil {
+			cursor = parsed
+		}
 	}
-	msgs, err := s.store.InboxSince(agent, cursor)
+	msgs, err := s.store.InboxSince(project, agent, cursor)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -115,6 +138,7 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 		apiMsgs = append(apiMsgs, apiMessage{
 			ID:        m.ID,
 			ThreadID:  m.ThreadID,
+			Project:   m.Project,
 			From:      m.From,
 			To:        m.To,
 			Body:      m.Body,
@@ -149,14 +173,20 @@ func (s *Service) handleMessageAction(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	_, err := s.store.AppendEvent(core.Event{Type: evType, Message: core.Message{ID: msgID}})
+	info, _ := auth.FromContext(r.Context())
+	project := info.Project
+	if project == "" {
+		project = strings.TrimSpace(r.URL.Query().Get("project"))
+	}
+	_, err := s.store.AppendEvent(core.Event{Type: evType, Project: project, Message: core.Message{ID: msgID, Project: project}})
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 	if s.bus != nil {
-		s.bus.Broadcast("", map[string]any{
+		s.bus.Broadcast(project, "", map[string]any{
 			"type":       string(evType),
+			"project":    project,
 			"message_id": msgID,
 		})
 	}

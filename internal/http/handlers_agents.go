@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mistakeknot/intermute/internal/auth"
 	"github.com/mistakeknot/intermute/internal/core"
 )
 
@@ -37,15 +38,27 @@ func (s *Service) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	info, _ := auth.FromContext(r.Context())
+	if info.Mode == auth.ModeAPIKey {
+		if strings.TrimSpace(req.Project) == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if req.Project != info.Project {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+	}
 
+	now := time.Now().UTC()
 	agent, err := s.store.RegisterAgent(core.Agent{
 		Name:         req.Name,
-		Project:      req.Project,
+		Project:      strings.TrimSpace(req.Project),
 		Capabilities: req.Capabilities,
 		Metadata:     req.Metadata,
 		Status:       req.Status,
-		CreatedAt:    time.Now().UTC(),
-		LastSeen:     time.Now().UTC(),
+		CreatedAt:    now,
+		LastSeen:     now,
 	})
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)

@@ -81,6 +81,14 @@ func defaultKeyring() *Keyring {
 	return &Keyring{AllowLocalhostWithoutAuth: true, keyToProject: make(map[string]string)}
 }
 
+func NewKeyring(allowLocalhost bool, keyToProject map[string]string) *Keyring {
+	clone := make(map[string]string, len(keyToProject))
+	for k, v := range keyToProject {
+		clone[k] = v
+	}
+	return &Keyring{AllowLocalhostWithoutAuth: allowLocalhost, keyToProject: clone}
+}
+
 func (k *Keyring) ProjectForKey(key string) (string, bool) {
 	if k == nil {
 		return "", false

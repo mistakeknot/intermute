@@ -2,15 +2,26 @@ package httpapi
 
 import "net/http"
 
-func NewRouter(svc *Service, wsHandler http.Handler) http.Handler {
+func NewRouter(svc *Service, wsHandler http.Handler, mw func(http.Handler) http.Handler) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/agents", svc.handleRegisterAgent)
-	mux.HandleFunc("/api/agents/", svc.handleAgentHeartbeat)
-	mux.HandleFunc("/api/messages", svc.handleSendMessage)
-	mux.HandleFunc("/api/messages/", svc.handleMessageAction)
-	mux.HandleFunc("/api/inbox/", svc.handleInbox)
+	wrap := func(h http.HandlerFunc) http.Handler {
+		handler := http.Handler(h)
+		if mw != nil {
+			handler = mw(handler)
+		}
+		return handler
+	}
+	mux.Handle("/api/agents", wrap(svc.handleRegisterAgent))
+	mux.Handle("/api/agents/", wrap(svc.handleAgentHeartbeat))
+	mux.Handle("/api/messages", wrap(svc.handleSendMessage))
+	mux.Handle("/api/messages/", wrap(svc.handleMessageAction))
+	mux.Handle("/api/inbox/", wrap(svc.handleInbox))
 	if wsHandler != nil {
-		mux.Handle("/ws/agents/", wsHandler)
+		if mw != nil {
+			mux.Handle("/ws/agents/", mw(wsHandler))
+		} else {
+			mux.Handle("/ws/agents/", wsHandler)
+		}
 	}
 	return mux
 }

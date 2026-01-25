@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mistakeknot/intermute/internal/auth"
 	httpapi "github.com/mistakeknot/intermute/internal/http"
 	"github.com/mistakeknot/intermute/internal/storage/sqlite"
 	"nhooyr.io/websocket"
@@ -23,10 +24,10 @@ func TestWSReceivesMessageEvents(t *testing.T) {
 	}
 	hub := NewHub()
 	svc := httpapi.NewService(st).WithBroadcaster(hub)
-	srv := httptest.NewServer(httpapi.NewRouter(svc, hub.Handler()))
+	srv := httptest.NewServer(httpapi.NewRouter(svc, hub.Handler(), auth.Middleware(nil)))
 	defer srv.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/agents/agent-b"
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws/agents/agent-b?project=proj-a"
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
@@ -36,9 +37,10 @@ func TestWSReceivesMessageEvents(t *testing.T) {
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	payload := map[string]any{
-		"from": "a",
-		"to":   []string{"agent-b"},
-		"body": "hi",
+		"project": "proj-a",
+		"from":    "a",
+		"to":      []string{"agent-b"},
+		"body":    "hi",
 	}
 	buf, _ := json.Marshal(payload)
 	resp, err := http.Post(srv.URL+"/api/messages", "application/json", bytes.NewReader(buf))

@@ -8,7 +8,7 @@ type Service struct {
 }
 
 type Broadcaster interface {
-	Broadcast(agent string, event any)
+	Broadcast(project, agent string, event any)
 }
 
 func NewService(store storage.Store) *Service {
