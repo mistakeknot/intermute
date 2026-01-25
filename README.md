@@ -33,13 +33,14 @@ See `intermute.keys.yaml.example` for the expected structure.
 - `INTERMUTE_AGENT_NAME` (optional override)
 
 ## API (MVP)
-- `POST /api/agents`
-- `POST /api/agents/{id}/heartbeat`
-- `POST /api/messages`
-- `GET /api/inbox/{agent}?since_cursor=...`
-- `POST /api/messages/{id}/ack`
-- `POST /api/messages/{id}/read`
-- `WS /ws/agents/{id}`
+- `POST /api/agents` - Register an agent
+- `GET /api/agents?project=...` - List agents (project required for API key auth)
+- `POST /api/agents/{id}/heartbeat` - Update agent last_seen
+- `POST /api/messages` - Send a message
+- `GET /api/inbox/{agent}?since_cursor=...` - Fetch messages
+- `POST /api/messages/{id}/ack` - Acknowledge a message
+- `POST /api/messages/{id}/read` - Mark message as read
+- `WS /ws/agents/{id}` - Real-time message delivery
 
 ### WebSocket Projects (local dev)
 When running without auth, use the `project` query param to scope WS streams:
