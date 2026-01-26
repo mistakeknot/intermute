@@ -313,3 +313,261 @@ func TestSessionCRUD(t *testing.T) {
 		t.Fatalf("DeleteSession: %v", err)
 	}
 }
+
+// Optimistic locking tests
+
+func TestSpecOptimisticLocking(t *testing.T) {
+	store, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create spec
+	spec := core.Spec{
+		Project: "test-project",
+		Title:   "Test Spec",
+	}
+	created, err := store.CreateSpec(spec)
+	if err != nil {
+		t.Fatalf("CreateSpec: %v", err)
+	}
+	if created.Version != 1 {
+		t.Errorf("version = %d, want 1", created.Version)
+	}
+
+	// First update should succeed
+	created.Title = "Updated Title"
+	updated, err := store.UpdateSpec(created)
+	if err != nil {
+		t.Fatalf("UpdateSpec: %v", err)
+	}
+	if updated.Version != 2 {
+		t.Errorf("version = %d, want 2", updated.Version)
+	}
+
+	// Second update with stale version should fail
+	created.Title = "Stale Update"
+	_, err = store.UpdateSpec(created) // created still has version=1
+	if err != core.ErrConcurrentModification {
+		t.Errorf("expected ErrConcurrentModification, got %v", err)
+	}
+
+	// Update with correct version should succeed
+	updated.Title = "Final Title"
+	final, err := store.UpdateSpec(updated)
+	if err != nil {
+		t.Fatalf("UpdateSpec with correct version: %v", err)
+	}
+	if final.Version != 3 {
+		t.Errorf("version = %d, want 3", final.Version)
+	}
+}
+
+func TestEpicOptimisticLocking(t *testing.T) {
+	store, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	epic := core.Epic{
+		Project: "test-project",
+		Title:   "Test Epic",
+	}
+	created, err := store.CreateEpic(epic)
+	if err != nil {
+		t.Fatalf("CreateEpic: %v", err)
+	}
+	if created.Version != 1 {
+		t.Errorf("version = %d, want 1", created.Version)
+	}
+
+	// Successful update
+	created.Title = "Updated Epic"
+	updated, err := store.UpdateEpic(created)
+	if err != nil {
+		t.Fatalf("UpdateEpic: %v", err)
+	}
+	if updated.Version != 2 {
+		t.Errorf("version = %d, want 2", updated.Version)
+	}
+
+	// Stale update should fail
+	created.Title = "Stale Epic"
+	_, err = store.UpdateEpic(created)
+	if err != core.ErrConcurrentModification {
+		t.Errorf("expected ErrConcurrentModification, got %v", err)
+	}
+}
+
+func TestStoryOptimisticLocking(t *testing.T) {
+	store, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	epic, _ := store.CreateEpic(core.Epic{
+		Project: "test-project",
+		Title:   "Parent Epic",
+	})
+
+	story := core.Story{
+		Project: "test-project",
+		EpicID:  epic.ID,
+		Title:   "Test Story",
+	}
+	created, err := store.CreateStory(story)
+	if err != nil {
+		t.Fatalf("CreateStory: %v", err)
+	}
+	if created.Version != 1 {
+		t.Errorf("version = %d, want 1", created.Version)
+	}
+
+	// Successful update
+	created.Title = "Updated Story"
+	updated, err := store.UpdateStory(created)
+	if err != nil {
+		t.Fatalf("UpdateStory: %v", err)
+	}
+	if updated.Version != 2 {
+		t.Errorf("version = %d, want 2", updated.Version)
+	}
+
+	// Stale update should fail
+	created.Title = "Stale Story"
+	_, err = store.UpdateStory(created)
+	if err != core.ErrConcurrentModification {
+		t.Errorf("expected ErrConcurrentModification, got %v", err)
+	}
+}
+
+func TestTaskOptimisticLocking(t *testing.T) {
+	store, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	task := core.Task{
+		Project: "test-project",
+		Title:   "Test Task",
+	}
+	created, err := store.CreateTask(task)
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if created.Version != 1 {
+		t.Errorf("version = %d, want 1", created.Version)
+	}
+
+	// Successful update
+	created.Agent = "claude"
+	updated, err := store.UpdateTask(created)
+	if err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if updated.Version != 2 {
+		t.Errorf("version = %d, want 2", updated.Version)
+	}
+
+	// Stale update should fail
+	created.Agent = "codex"
+	_, err = store.UpdateTask(created)
+	if err != core.ErrConcurrentModification {
+		t.Errorf("expected ErrConcurrentModification, got %v", err)
+	}
+}
+
+func TestCUJOptimisticLocking(t *testing.T) {
+	store, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	spec, _ := store.CreateSpec(core.Spec{
+		Project: "test-project",
+		Title:   "Test Spec",
+	})
+
+	cuj := core.CriticalUserJourney{
+		Project: "test-project",
+		SpecID:  spec.ID,
+		Title:   "Test CUJ",
+	}
+	created, err := store.CreateCUJ(cuj)
+	if err != nil {
+		t.Fatalf("CreateCUJ: %v", err)
+	}
+	if created.Version != 1 {
+		t.Errorf("version = %d, want 1", created.Version)
+	}
+
+	// Successful update
+	created.Title = "Updated CUJ"
+	updated, err := store.UpdateCUJ(created)
+	if err != nil {
+		t.Fatalf("UpdateCUJ: %v", err)
+	}
+	if updated.Version != 2 {
+		t.Errorf("version = %d, want 2", updated.Version)
+	}
+
+	// Stale update should fail
+	created.Title = "Stale CUJ"
+	_, err = store.UpdateCUJ(created)
+	if err != core.ErrConcurrentModification {
+		t.Errorf("expected ErrConcurrentModification, got %v", err)
+	}
+}
+
+func TestVersionPersistedInGet(t *testing.T) {
+	store, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create and update spec
+	spec, _ := store.CreateSpec(core.Spec{
+		Project: "test-project",
+		Title:   "Test Spec",
+	})
+	spec.Title = "Updated"
+	spec, _ = store.UpdateSpec(spec)
+	spec.Title = "Updated Again"
+	spec, _ = store.UpdateSpec(spec)
+
+	// Fetch and verify version is persisted
+	fetched, err := store.GetSpec("test-project", spec.ID)
+	if err != nil {
+		t.Fatalf("GetSpec: %v", err)
+	}
+	if fetched.Version != 3 {
+		t.Errorf("fetched version = %d, want 3", fetched.Version)
+	}
+}
+
+func TestVersionPersistedInList(t *testing.T) {
+	store, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create and update epic
+	epic, _ := store.CreateEpic(core.Epic{
+		Project: "test-project",
+		Title:   "Test Epic",
+	})
+	epic.Title = "Updated"
+	epic, _ = store.UpdateEpic(epic)
+
+	// List and verify version is persisted
+	epics, err := store.ListEpics("test-project", "")
+	if err != nil {
+		t.Fatalf("ListEpics: %v", err)
+	}
+	if len(epics) != 1 {
+		t.Fatalf("len(epics) = %d, want 1", len(epics))
+	}
+	if epics[0].Version != 2 {
+		t.Errorf("listed version = %d, want 2", epics[0].Version)
+	}
+}

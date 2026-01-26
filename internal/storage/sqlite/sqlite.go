@@ -68,6 +68,9 @@ func applySchema(db *sql.DB) error {
 	if err := migrateMessagesMetadata(db); err != nil {
 		return err
 	}
+	if err := migrateDomainVersions(db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -951,4 +954,21 @@ func (s *Store) scanReservationsWithRelease(rows *sql.Rows) ([]core.Reservation,
 		return nil, fmt.Errorf("rows: %w", err)
 	}
 	return out, nil
+}
+
+// migrateDomainVersions adds version columns to domain tables (specs, epics, stories, tasks)
+func migrateDomainVersions(db *sql.DB) error {
+	tables := []string{"specs", "epics", "stories", "tasks"}
+	for _, table := range tables {
+		if !tableExists(db, table) {
+			continue
+		}
+		if tableHasColumn(db, table, "version") {
+			continue
+		}
+		if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN version INTEGER NOT NULL DEFAULT 1", table)); err != nil {
+			return fmt.Errorf("add version column to %s: %w", table, err)
+		}
+	}
+	return nil
 }

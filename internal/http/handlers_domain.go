@@ -836,3 +836,221 @@ func (s *DomainService) broadcastDomainEvent(project string, eventType core.Even
 		"data":      data,
 	})
 }
+
+// CUJ (Critical User Journey) handlers
+
+func (s *DomainService) handleCUJs(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.listCUJs(w, r)
+	case http.MethodPost:
+		s.createCUJ(w, r)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *DomainService) handleCUJByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/cujs/")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	id := parts[0]
+
+	// Handle /api/cujs/{id}/link and /api/cujs/{id}/unlink
+	if len(parts) >= 2 {
+		switch parts[1] {
+		case "link":
+			s.linkCUJToFeature(w, r, id)
+			return
+		case "unlink":
+			s.unlinkCUJFromFeature(w, r, id)
+			return
+		case "links":
+			s.getCUJFeatureLinks(w, r, id)
+			return
+		}
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		s.getCUJ(w, r, id)
+	case http.MethodPut:
+		s.updateCUJ(w, r, id)
+	case http.MethodDelete:
+		s.deleteCUJ(w, r, id)
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *DomainService) createCUJ(w http.ResponseWriter, r *http.Request) {
+	var cuj core.CriticalUserJourney
+	if err := json.NewDecoder(r.Body).Decode(&cuj); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	info, _ := auth.FromContext(r.Context())
+	if info.Mode == auth.ModeAPIKey && cuj.Project != info.Project {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+	created, err := s.domainStore.CreateCUJ(cuj)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	s.broadcastDomainEvent(cuj.Project, core.EventCUJCreated, created.ID, created)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(created)
+}
+
+func (s *DomainService) getCUJ(w http.ResponseWriter, r *http.Request, id string) {
+	info, _ := auth.FromContext(r.Context())
+	project := info.Project
+	if project == "" {
+		project = r.URL.Query().Get("project")
+	}
+	cuj, err := s.domainStore.GetCUJ(project, id)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cuj)
+}
+
+func (s *DomainService) listCUJs(w http.ResponseWriter, r *http.Request) {
+	info, _ := auth.FromContext(r.Context())
+	project := info.Project
+	if project == "" {
+		project = r.URL.Query().Get("project")
+	}
+	specID := r.URL.Query().Get("spec")
+	cujs, err := s.domainStore.ListCUJs(project, specID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if cujs == nil {
+		cujs = []core.CriticalUserJourney{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(cujs)
+}
+
+func (s *DomainService) updateCUJ(w http.ResponseWriter, r *http.Request, id string) {
+	var cuj core.CriticalUserJourney
+	if err := json.NewDecoder(r.Body).Decode(&cuj); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	cuj.ID = id
+	info, _ := auth.FromContext(r.Context())
+	if info.Mode == auth.ModeAPIKey && cuj.Project != info.Project {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	// Determine which event to broadcast based on status change
+	eventType := core.EventCUJUpdated
+	if cuj.Status == core.CUJStatusValidated {
+		eventType = core.EventCUJValidated
+	}
+
+	updated, err := s.domainStore.UpdateCUJ(cuj)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	s.broadcastDomainEvent(cuj.Project, eventType, updated.ID, updated)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(updated)
+}
+
+func (s *DomainService) deleteCUJ(w http.ResponseWriter, r *http.Request, id string) {
+	info, _ := auth.FromContext(r.Context())
+	project := info.Project
+	if project == "" {
+		project = r.URL.Query().Get("project")
+	}
+	if err := s.domainStore.DeleteCUJ(project, id); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	s.broadcastDomainEvent(project, core.EventCUJArchived, id, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *DomainService) linkCUJToFeature(w http.ResponseWriter, r *http.Request, cujID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		FeatureID string `json:"feature_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	info, _ := auth.FromContext(r.Context())
+	project := info.Project
+	if project == "" {
+		project = r.URL.Query().Get("project")
+	}
+	if err := s.domainStore.LinkCUJToFeature(project, cujID, req.FeatureID); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *DomainService) unlinkCUJFromFeature(w http.ResponseWriter, r *http.Request, cujID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		FeatureID string `json:"feature_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	info, _ := auth.FromContext(r.Context())
+	project := info.Project
+	if project == "" {
+		project = r.URL.Query().Get("project")
+	}
+	if err := s.domainStore.UnlinkCUJFromFeature(project, cujID, req.FeatureID); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *DomainService) getCUJFeatureLinks(w http.ResponseWriter, r *http.Request, cujID string) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	info, _ := auth.FromContext(r.Context())
+	project := info.Project
+	if project == "" {
+		project = r.URL.Query().Get("project")
+	}
+	links, err := s.domainStore.GetCUJFeatureLinks(project, cujID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if links == nil {
+		links = []core.CUJFeatureLink{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(links)
+}

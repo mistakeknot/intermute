@@ -47,4 +47,14 @@ type DomainStore interface {
 	ListSessions(project, status string) ([]core.Session, error)
 	UpdateSession(session core.Session) (core.Session, error)
 	DeleteSession(project, id string) error
+
+	// CUJ (Critical User Journey) operations
+	CreateCUJ(cuj core.CriticalUserJourney) (core.CriticalUserJourney, error)
+	GetCUJ(project, id string) (core.CriticalUserJourney, error)
+	ListCUJs(project, specID string) ([]core.CriticalUserJourney, error)
+	UpdateCUJ(cuj core.CriticalUserJourney) (core.CriticalUserJourney, error)
+	DeleteCUJ(project, id string) error
+	LinkCUJToFeature(project, cujID, featureID string) error
+	UnlinkCUJFromFeature(project, cujID, featureID string) error
+	GetCUJFeatureLinks(project, cujID string) ([]core.CUJFeatureLink, error)
 }

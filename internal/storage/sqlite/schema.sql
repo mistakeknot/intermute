@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS specs (
   users TEXT,
   problem TEXT,
   status TEXT NOT NULL DEFAULT 'draft',
+  version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (project, id)
@@ -115,6 +116,7 @@ CREATE TABLE IF NOT EXISTS epics (
   title TEXT NOT NULL,
   description TEXT,
   status TEXT NOT NULL DEFAULT 'open',
+  version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (project, id)
@@ -130,6 +132,7 @@ CREATE TABLE IF NOT EXISTS stories (
   title TEXT NOT NULL,
   acceptance_criteria_json TEXT,
   status TEXT NOT NULL DEFAULT 'todo',
+  version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (project, id)
@@ -146,6 +149,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   agent TEXT,
   session_id TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
+  version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (project, id)

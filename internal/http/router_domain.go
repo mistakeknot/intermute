@@ -35,6 +35,8 @@ func NewDomainRouter(svc *DomainService, wsHandler http.Handler, mw func(http.Ha
 	mux.Handle("/api/insights/", wrap(svc.handleInsightByID))
 	mux.Handle("/api/sessions", wrap(svc.handleSessions))
 	mux.Handle("/api/sessions/", wrap(svc.handleSessionByID))
+	mux.Handle("/api/cujs", wrap(svc.handleCUJs))
+	mux.Handle("/api/cujs/", wrap(svc.handleCUJByID))
 
 	// WebSocket
 	if wsHandler != nil {

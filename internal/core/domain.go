@@ -1,6 +1,12 @@
 package core
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrConcurrentModification is returned when an optimistic locking conflict occurs
+var ErrConcurrentModification = errors.New("concurrent modification: entity was updated by another process")
 
 // Domain event types for Autarch domain entities
 const (
@@ -50,6 +56,7 @@ type Spec struct {
 	Users     string     `json:"users,omitempty"`
 	Problem   string     `json:"problem,omitempty"`
 	Status    SpecStatus `json:"status"`
+	Version   int64      `json:"version,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
@@ -71,6 +78,7 @@ type Epic struct {
 	Title       string     `json:"title"`
 	Description string     `json:"description,omitempty"`
 	Status      EpicStatus `json:"status"`
+	Version     int64      `json:"version,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
@@ -93,6 +101,7 @@ type Story struct {
 	Title              string      `json:"title"`
 	AcceptanceCriteria []string    `json:"acceptance_criteria,omitempty"`
 	Status             StoryStatus `json:"status"`
+	Version            int64       `json:"version,omitempty"`
 	CreatedAt          time.Time   `json:"created_at"`
 	UpdatedAt          time.Time   `json:"updated_at"`
 }
@@ -116,6 +125,7 @@ type Task struct {
 	Agent     string     `json:"agent,omitempty"`
 	SessionID string     `json:"session_id,omitempty"`
 	Status    TaskStatus `json:"status"`
+	Version   int64      `json:"version,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
@@ -164,4 +174,65 @@ type DomainEvent struct {
 	Data      any       `json:"data,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	Cursor    uint64    `json:"cursor"`
+}
+
+// CUJ (Critical User Journey) events
+const (
+	EventCUJCreated   EventType = "cuj.created"
+	EventCUJValidated EventType = "cuj.validated"
+	EventCUJUpdated   EventType = "cuj.updated"
+	EventCUJArchived  EventType = "cuj.archived"
+)
+
+// CUJStatus represents the status of a Critical User Journey
+type CUJStatus string
+
+const (
+	CUJStatusDraft     CUJStatus = "draft"
+	CUJStatusValidated CUJStatus = "validated"
+	CUJStatusArchived  CUJStatus = "archived"
+)
+
+// CUJPriority represents the priority level of a CUJ
+type CUJPriority string
+
+const (
+	CUJPriorityHigh   CUJPriority = "high"
+	CUJPriorityMedium CUJPriority = "medium"
+	CUJPriorityLow    CUJPriority = "low"
+)
+
+// CriticalUserJourney represents a first-class CUJ entity
+type CriticalUserJourney struct {
+	ID              string      `json:"id"`
+	SpecID          string      `json:"spec_id"`
+	Project         string      `json:"project"`
+	Title           string      `json:"title"`
+	Persona         string      `json:"persona,omitempty"`
+	Priority        CUJPriority `json:"priority"`
+	EntryPoint      string      `json:"entry_point,omitempty"`
+	ExitPoint       string      `json:"exit_point,omitempty"`
+	Steps           []CUJStep   `json:"steps,omitempty"`
+	SuccessCriteria []string    `json:"success_criteria,omitempty"`
+	ErrorRecovery   []string    `json:"error_recovery,omitempty"`
+	Status          CUJStatus   `json:"status"`
+	Version         int64       `json:"version,omitempty"`
+	CreatedAt       time.Time   `json:"created_at"`
+	UpdatedAt       time.Time   `json:"updated_at"`
+}
+
+// CUJStep represents a single step in a Critical User Journey
+type CUJStep struct {
+	Order        int      `json:"order"`
+	Action       string   `json:"action"`
+	Expected     string   `json:"expected"`
+	Alternatives []string `json:"alternatives,omitempty"`
+}
+
+// CUJFeatureLink represents a many-to-many link between CUJs and features
+type CUJFeatureLink struct {
+	CUJID     string    `json:"cuj_id"`
+	FeatureID string    `json:"feature_id"`
+	Project   string    `json:"project"`
+	LinkedAt  time.Time `json:"linked_at"`
 }
