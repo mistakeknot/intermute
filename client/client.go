@@ -102,6 +102,31 @@ type ThreadMessagesResponse struct {
 	Cursor   uint64    `json:"cursor"`
 }
 
+// InboxCounts represents inbox statistics
+type InboxCounts struct {
+	Total  int `json:"total"`
+	Unread int `json:"unread"`
+}
+
+// Reservation represents a file lock held by an agent
+type Reservation struct {
+	ID          string  `json:"id"`
+	AgentID     string  `json:"agent_id"`
+	Project     string  `json:"project"`
+	PathPattern string  `json:"path_pattern"`
+	Exclusive   bool    `json:"exclusive"`
+	Reason      string  `json:"reason,omitempty"`
+	TTLMinutes  int     `json:"ttl_minutes,omitempty"` // For requests
+	CreatedAt   string  `json:"created_at,omitempty"`
+	ExpiresAt   string  `json:"expires_at,omitempty"`
+	ReleasedAt  *string `json:"released_at,omitempty"`
+	IsActive    bool    `json:"is_active,omitempty"`
+}
+
+type ReservationsResponse struct {
+	Reservations []Reservation `json:"reservations"`
+}
+
 func New(baseURL string, opts ...Option) *Client {
 	c := &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
@@ -278,6 +303,109 @@ func (c *Client) ThreadMessages(ctx context.Context, threadID string, cursor uin
 		return ThreadMessagesResponse{}, err
 	}
 	return out, nil
+}
+
+// InboxCounts returns the total and unread message counts for an agent
+func (c *Client) InboxCounts(ctx context.Context, agent string) (InboxCounts, error) {
+	values := url.Values{}
+	if c.Project != "" {
+		values.Set("project", c.Project)
+	}
+	endpoint := fmt.Sprintf("/api/inbox/%s/counts", url.PathEscape(agent))
+	if len(values) > 0 {
+		endpoint += "?" + values.Encode()
+	}
+	resp, err := c.get(ctx, endpoint)
+	if err != nil {
+		return InboxCounts{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return InboxCounts{}, fmt.Errorf("inbox counts failed: %d", resp.StatusCode)
+	}
+	var out InboxCounts
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return InboxCounts{}, err
+	}
+	return out, nil
+}
+
+// Reserve creates a new file reservation
+func (c *Client) Reserve(ctx context.Context, r Reservation) (Reservation, error) {
+	if r.Project == "" {
+		r.Project = c.Project
+	}
+	resp, err := c.postJSON(ctx, "/api/reservations", r)
+	if err != nil {
+		return Reservation{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return Reservation{}, fmt.Errorf("reserve failed: %d", resp.StatusCode)
+	}
+	var out Reservation
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return Reservation{}, err
+	}
+	return out, nil
+}
+
+// ReleaseReservation releases a file reservation by ID
+func (c *Client) ReleaseReservation(ctx context.Context, id string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+		c.BaseURL+"/api/reservations/"+url.PathEscape(id), nil)
+	if err != nil {
+		return err
+	}
+	c.applyHeaders(req)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("release failed: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// ActiveReservations returns all active reservations for a project
+func (c *Client) ActiveReservations(ctx context.Context, project string) ([]Reservation, error) {
+	if project == "" {
+		project = c.Project
+	}
+	endpoint := "/api/reservations?project=" + url.QueryEscape(project)
+	resp, err := c.get(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list reservations failed: %d", resp.StatusCode)
+	}
+	var out ReservationsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Reservations, nil
+}
+
+// AgentReservations returns all reservations held by an agent
+func (c *Client) AgentReservations(ctx context.Context, agentID string) ([]Reservation, error) {
+	endpoint := "/api/reservations?agent=" + url.QueryEscape(agentID)
+	resp, err := c.get(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("agent reservations failed: %d", resp.StatusCode)
+	}
+	var out ReservationsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Reservations, nil
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, payload any) (*http.Response, error) {
