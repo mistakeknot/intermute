@@ -70,3 +70,22 @@ func (r *RecipientStatus) IsRead() bool { return r.ReadAt != nil }
 
 // IsAcked returns true if the recipient has acknowledged the message
 func (r *RecipientStatus) IsAcked() bool { return r.AckAt != nil }
+
+// Reservation represents a file lock held by an agent
+type Reservation struct {
+	ID          string        // Unique reservation ID
+	AgentID     string        // Agent holding the reservation
+	Project     string        // Project scope
+	PathPattern string        // Glob pattern for files (e.g., "pkg/events/*.go")
+	Exclusive   bool          // True for exclusive lock, false for shared
+	Reason      string        // Why this reservation was made
+	TTL         time.Duration // Time-to-live (used when creating)
+	CreatedAt   time.Time     // When the reservation was created
+	ExpiresAt   time.Time     // When the reservation expires
+	ReleasedAt  *time.Time    // When explicitly released (nil if not released)
+}
+
+// IsActive returns true if the reservation is still active
+func (r *Reservation) IsActive() bool {
+	return r.ReleasedAt == nil && time.Now().Before(r.ExpiresAt)
+}

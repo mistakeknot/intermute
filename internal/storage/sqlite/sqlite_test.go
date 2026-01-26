@@ -259,6 +259,79 @@ func TestSQLiteThreadPaginationCursorFromPage(t *testing.T) {
 	}
 }
 
+func TestFileReservation(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Reserve a file
+	res, err := st.Reserve(core.Reservation{
+		AgentID:     "agent-1",
+		Project:     "autarch",
+		PathPattern: "pkg/events/*.go",
+		Exclusive:   true,
+		Reason:      "Refactoring events package",
+		TTL:         30 * time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	if res.ID == "" {
+		t.Error("expected reservation ID")
+	}
+
+	// Check active reservations
+	active, err := st.ActiveReservations("autarch")
+	if err != nil {
+		t.Fatalf("active reservations: %v", err)
+	}
+	if len(active) != 1 {
+		t.Errorf("expected 1 active reservation, got %d", len(active))
+	}
+	if active[0].AgentID != "agent-1" {
+		t.Errorf("expected agent-1, got %s", active[0].AgentID)
+	}
+
+	// Check agent reservations
+	agentRes, err := st.AgentReservations("agent-1")
+	if err != nil {
+		t.Fatalf("agent reservations: %v", err)
+	}
+	if len(agentRes) != 1 {
+		t.Errorf("expected 1 reservation for agent-1, got %d", len(agentRes))
+	}
+
+	// Release the reservation
+	if err := st.ReleaseReservation(res.ID); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+
+	// Verify it's no longer active
+	active, _ = st.ActiveReservations("autarch")
+	if len(active) != 0 {
+		t.Errorf("expected 0 active reservations after release, got %d", len(active))
+	}
+}
+
+func TestReservationExpiry(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Reserve with very short TTL (already expired)
+	_, err := st.Reserve(core.Reservation{
+		AgentID:     "agent-1",
+		Project:     "autarch",
+		PathPattern: "*.go",
+		TTL:         -1 * time.Second, // Already expired
+	})
+	if err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+
+	// Should not appear in active reservations
+	active, _ := st.ActiveReservations("autarch")
+	if len(active) != 0 {
+		t.Errorf("expected 0 active reservations (expired), got %d", len(active))
+	}
+}
+
 func TestRecipientTracking(t *testing.T) {
 	st := NewSQLiteTest(t)
 

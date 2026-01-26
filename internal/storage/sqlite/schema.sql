@@ -49,6 +49,21 @@ CREATE TABLE IF NOT EXISTS message_recipients (
 
 CREATE INDEX IF NOT EXISTS idx_recipients_agent ON message_recipients(project, agent_id);
 
+CREATE TABLE IF NOT EXISTS file_reservations (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  project TEXT NOT NULL,
+  path_pattern TEXT NOT NULL,
+  exclusive INTEGER NOT NULL DEFAULT 1,
+  reason TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  released_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_reservations_project ON file_reservations(project);
+CREATE INDEX IF NOT EXISTS idx_reservations_agent ON file_reservations(agent_id);
+
 CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY,
   session_id TEXT,

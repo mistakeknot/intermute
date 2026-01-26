@@ -31,6 +31,11 @@ type Store interface {
 	MarkRead(project, messageID, agentID string) error
 	MarkAck(project, messageID, agentID string) error
 	RecipientStatus(project, messageID string) (map[string]*core.RecipientStatus, error)
+	// File reservations
+	Reserve(r core.Reservation) (*core.Reservation, error)
+	ReleaseReservation(id string) error
+	ActiveReservations(project string) ([]core.Reservation, error)
+	AgentReservations(agentID string) ([]core.Reservation, error)
 }
 
 // InMemory is a minimal in-memory store for tests.
@@ -227,4 +232,24 @@ func (m *InMemory) MarkAck(project, messageID, agentID string) error {
 // RecipientStatus returns the read/ack status for all recipients (stub for in-memory store)
 func (m *InMemory) RecipientStatus(project, messageID string) (map[string]*core.RecipientStatus, error) {
 	return make(map[string]*core.RecipientStatus), nil // In-memory store doesn't track per-recipient status
+}
+
+// Reserve creates a file reservation (stub for in-memory store)
+func (m *InMemory) Reserve(r core.Reservation) (*core.Reservation, error) {
+	return &r, nil // In-memory store doesn't track reservations
+}
+
+// ReleaseReservation releases a file reservation (stub for in-memory store)
+func (m *InMemory) ReleaseReservation(id string) error {
+	return nil // In-memory store doesn't track reservations
+}
+
+// ActiveReservations returns active reservations (stub for in-memory store)
+func (m *InMemory) ActiveReservations(project string) ([]core.Reservation, error) {
+	return nil, nil // In-memory store doesn't track reservations
+}
+
+// AgentReservations returns an agent's reservations (stub for in-memory store)
+func (m *InMemory) AgentReservations(agentID string) ([]core.Reservation, error) {
+	return nil, nil // In-memory store doesn't track reservations
 }

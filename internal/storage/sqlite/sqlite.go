@@ -782,3 +782,150 @@ func (s *Store) RecipientStatus(project, messageID string) (map[string]*core.Rec
 	}
 	return result, nil
 }
+
+// Reserve creates a new file reservation
+func (s *Store) Reserve(r core.Reservation) (*core.Reservation, error) {
+	if r.ID == "" {
+		r.ID = uuid.NewString()
+	}
+	now := time.Now().UTC()
+	r.CreatedAt = now
+	if r.TTL == 0 {
+		r.TTL = 30 * time.Minute // Default TTL
+	}
+	r.ExpiresAt = now.Add(r.TTL) // Negative TTL will create already-expired reservation
+
+	exclusive := 0
+	if r.Exclusive {
+		exclusive = 1
+	}
+
+	_, err := s.db.Exec(
+		`INSERT INTO file_reservations (id, agent_id, project, path_pattern, exclusive, reason, created_at, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.AgentID, r.Project, r.PathPattern, exclusive, r.Reason,
+		r.CreatedAt.Format(time.RFC3339Nano), r.ExpiresAt.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert reservation: %w", err)
+	}
+	return &r, nil
+}
+
+// ReleaseReservation marks a reservation as released
+func (s *Store) ReleaseReservation(id string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.Exec(
+		`UPDATE file_reservations SET released_at = ? WHERE id = ? AND released_at IS NULL`,
+		now, id,
+	)
+	if err != nil {
+		return fmt.Errorf("release reservation: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("reservation not found or already released")
+	}
+	return nil
+}
+
+// ActiveReservations returns all non-expired, non-released reservations for a project
+func (s *Store) ActiveReservations(project string) ([]core.Reservation, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	rows, err := s.db.Query(
+		`SELECT id, agent_id, project, path_pattern, exclusive, reason, created_at, expires_at
+		 FROM file_reservations
+		 WHERE project = ? AND released_at IS NULL AND expires_at > ?
+		 ORDER BY created_at DESC`,
+		project, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query reservations: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanReservations(rows)
+}
+
+// AgentReservations returns all reservations held by an agent (including expired but not released)
+func (s *Store) AgentReservations(agentID string) ([]core.Reservation, error) {
+	rows, err := s.db.Query(
+		`SELECT id, agent_id, project, path_pattern, exclusive, reason, created_at, expires_at, released_at
+		 FROM file_reservations
+		 WHERE agent_id = ?
+		 ORDER BY created_at DESC`,
+		agentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query agent reservations: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanReservationsWithRelease(rows)
+}
+
+func (s *Store) scanReservations(rows *sql.Rows) ([]core.Reservation, error) {
+	var out []core.Reservation
+	for rows.Next() {
+		var (
+			id, agentID, project, pattern, reason string
+			exclusive                             int
+			createdAt, expiresAt                  string
+		)
+		if err := rows.Scan(&id, &agentID, &project, &pattern, &exclusive, &reason, &createdAt, &expiresAt); err != nil {
+			return nil, fmt.Errorf("scan reservation: %w", err)
+		}
+		created, _ := time.Parse(time.RFC3339Nano, createdAt)
+		expires, _ := time.Parse(time.RFC3339Nano, expiresAt)
+		out = append(out, core.Reservation{
+			ID:          id,
+			AgentID:     agentID,
+			Project:     project,
+			PathPattern: pattern,
+			Exclusive:   exclusive == 1,
+			Reason:      reason,
+			CreatedAt:   created,
+			ExpiresAt:   expires,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Store) scanReservationsWithRelease(rows *sql.Rows) ([]core.Reservation, error) {
+	var out []core.Reservation
+	for rows.Next() {
+		var (
+			id, agentID, project, pattern, reason string
+			exclusive                             int
+			createdAt, expiresAt                  string
+			releasedAt                            sql.NullString
+		)
+		if err := rows.Scan(&id, &agentID, &project, &pattern, &exclusive, &reason, &createdAt, &expiresAt, &releasedAt); err != nil {
+			return nil, fmt.Errorf("scan reservation: %w", err)
+		}
+		created, _ := time.Parse(time.RFC3339Nano, createdAt)
+		expires, _ := time.Parse(time.RFC3339Nano, expiresAt)
+		r := core.Reservation{
+			ID:          id,
+			AgentID:     agentID,
+			Project:     project,
+			PathPattern: pattern,
+			Exclusive:   exclusive == 1,
+			Reason:      reason,
+			CreatedAt:   created,
+			ExpiresAt:   expires,
+		}
+		if releasedAt.Valid {
+			t, _ := time.Parse(time.RFC3339Nano, releasedAt.String)
+			r.ReleasedAt = &t
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
