@@ -57,14 +57,19 @@ type ListAgentsResponse struct {
 }
 
 type Message struct {
-	ID        string   `json:"id,omitempty"`
-	ThreadID  string   `json:"thread_id,omitempty"`
-	Project   string   `json:"project,omitempty"`
-	From      string   `json:"from"`
-	To        []string `json:"to"`
-	Body      string   `json:"body"`
-	CreatedAt string   `json:"created_at,omitempty"`
-	Cursor    uint64   `json:"cursor,omitempty"`
+	ID          string   `json:"id,omitempty"`
+	ThreadID    string   `json:"thread_id,omitempty"`
+	Project     string   `json:"project,omitempty"`
+	From        string   `json:"from"`
+	To          []string `json:"to"`
+	CC          []string `json:"cc,omitempty"`
+	BCC         []string `json:"bcc,omitempty"`
+	Subject     string   `json:"subject,omitempty"`
+	Body        string   `json:"body"`
+	Importance  string   `json:"importance,omitempty"`
+	AckRequired bool     `json:"ack_required,omitempty"`
+	CreatedAt   string   `json:"created_at,omitempty"`
+	Cursor      uint64   `json:"cursor,omitempty"`
 }
 
 type SendResponse struct {

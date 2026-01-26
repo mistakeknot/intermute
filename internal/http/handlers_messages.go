@@ -13,12 +13,17 @@ import (
 )
 
 type sendMessageRequest struct {
-	ID       string   `json:"id"`
-	ThreadID string   `json:"thread_id"`
-	Project  string   `json:"project"`
-	From     string   `json:"from"`
-	To       []string `json:"to"`
-	Body     string   `json:"body"`
+	ID          string   `json:"id"`
+	ThreadID    string   `json:"thread_id"`
+	Project     string   `json:"project"`
+	From        string   `json:"from"`
+	To          []string `json:"to"`
+	CC          []string `json:"cc,omitempty"`
+	BCC         []string `json:"bcc,omitempty"`
+	Subject     string   `json:"subject,omitempty"`
+	Body        string   `json:"body"`
+	Importance  string   `json:"importance,omitempty"`
+	AckRequired bool     `json:"ack_required,omitempty"`
 }
 
 type sendMessageResponse struct {
@@ -27,14 +32,19 @@ type sendMessageResponse struct {
 }
 
 type apiMessage struct {
-	ID        string   `json:"id"`
-	ThreadID  string   `json:"thread_id"`
-	Project   string   `json:"project"`
-	From      string   `json:"from"`
-	To        []string `json:"to"`
-	Body      string   `json:"body"`
-	CreatedAt string   `json:"created_at"`
-	Cursor    uint64   `json:"cursor"`
+	ID          string   `json:"id"`
+	ThreadID    string   `json:"thread_id"`
+	Project     string   `json:"project"`
+	From        string   `json:"from"`
+	To          []string `json:"to"`
+	CC          []string `json:"cc,omitempty"`
+	BCC         []string `json:"bcc,omitempty"`
+	Subject     string   `json:"subject,omitempty"`
+	Body        string   `json:"body"`
+	Importance  string   `json:"importance,omitempty"`
+	AckRequired bool     `json:"ack_required,omitempty"`
+	CreatedAt   string   `json:"created_at"`
+	Cursor      uint64   `json:"cursor"`
 }
 
 type inboxResponse struct {
@@ -74,13 +84,18 @@ func (s *Service) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	project := strings.TrimSpace(req.Project)
 	msg := core.Message{
-		ID:        msgID,
-		ThreadID:  req.ThreadID,
-		Project:   project,
-		From:      req.From,
-		To:        req.To,
-		Body:      req.Body,
-		CreatedAt: time.Now().UTC(),
+		ID:          msgID,
+		ThreadID:    req.ThreadID,
+		Project:     project,
+		From:        req.From,
+		To:          req.To,
+		CC:          req.CC,
+		BCC:         req.BCC,
+		Subject:     req.Subject,
+		Body:        req.Body,
+		Importance:  req.Importance,
+		AckRequired: req.AckRequired,
+		CreatedAt:   time.Now().UTC(),
 	}
 	cursor, err := s.store.AppendEvent(core.Event{Type: core.EventMessageCreated, Project: project, Message: msg})
 	if err != nil {
@@ -136,14 +151,19 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 	apiMsgs := make([]apiMessage, 0, len(msgs))
 	for _, m := range msgs {
 		apiMsgs = append(apiMsgs, apiMessage{
-			ID:        m.ID,
-			ThreadID:  m.ThreadID,
-			Project:   m.Project,
-			From:      m.From,
-			To:        m.To,
-			Body:      m.Body,
-			CreatedAt: m.CreatedAt.Format(time.RFC3339Nano),
-			Cursor:    m.Cursor,
+			ID:          m.ID,
+			ThreadID:    m.ThreadID,
+			Project:     m.Project,
+			From:        m.From,
+			To:          m.To,
+			CC:          m.CC,
+			BCC:         m.BCC,
+			Subject:     m.Subject,
+			Body:        m.Body,
+			Importance:  m.Importance,
+			AckRequired: m.AckRequired,
+			CreatedAt:   m.CreatedAt.Format(time.RFC3339Nano),
+			Cursor:      m.Cursor,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")

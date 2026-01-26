@@ -22,6 +22,9 @@ type Message struct {
 	Project     string
 	From        string
 	To          []string
+	CC          []string          // Carbon copy recipients
+	BCC         []string          // Blind carbon copy recipients
+	Subject     string            // Message subject line
 	Body        string
 	Metadata    map[string]string
 	Attachments []Attachment

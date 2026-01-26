@@ -18,7 +18,12 @@ CREATE TABLE IF NOT EXISTS messages (
   thread_id TEXT,
   from_agent TEXT,
   to_json TEXT,
+  cc_json TEXT,
+  bcc_json TEXT,
+  subject TEXT,
   body TEXT,
+  importance TEXT,
+  ack_required INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   PRIMARY KEY (project, message_id)
 );

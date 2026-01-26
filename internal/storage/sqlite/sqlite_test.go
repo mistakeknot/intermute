@@ -259,6 +259,52 @@ func TestSQLiteThreadPaginationCursorFromPage(t *testing.T) {
 	}
 }
 
+func TestMessageWithMetadata(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Create a message with subject, CC, and BCC
+	msg := core.Message{
+		ID:          "m1",
+		Project:     "proj",
+		From:        "alice",
+		To:          []string{"bob"},
+		CC:          []string{"charlie"},
+		BCC:         []string{"dave"},
+		Subject:     "Important Update",
+		Body:        "Test message body",
+		Importance:  "high",
+		AckRequired: true,
+	}
+	_, err := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: msg})
+	if err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+
+	// Fetch from inbox and verify metadata is preserved
+	msgs, err := st.InboxSince("proj", "bob", 0)
+	if err != nil {
+		t.Fatalf("inbox: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].Subject != "Important Update" {
+		t.Errorf("expected subject 'Important Update', got '%s'", msgs[0].Subject)
+	}
+	if msgs[0].Importance != "high" {
+		t.Errorf("expected importance 'high', got '%s'", msgs[0].Importance)
+	}
+	if !msgs[0].AckRequired {
+		t.Error("expected ack_required=true")
+	}
+	if len(msgs[0].CC) != 1 || msgs[0].CC[0] != "charlie" {
+		t.Errorf("expected CC=['charlie'], got %v", msgs[0].CC)
+	}
+	if len(msgs[0].BCC) != 1 || msgs[0].BCC[0] != "dave" {
+		t.Errorf("expected BCC=['dave'], got %v", msgs[0].BCC)
+	}
+}
+
 func TestSQLiteThreadBackfillIncludesSender(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "intermute.db")
