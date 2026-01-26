@@ -13,6 +13,11 @@ Coordination service for Autarch agents.
 go run ./cmd/intermute
 ```
 
+### Initialize Auth Keys
+```bash
+intermute init --project autarch
+```
+
 ## Auth Model
 - Localhost requests are allowed without auth by default.
 - Non-localhost requests require `Authorization: Bearer <key>`.
@@ -25,6 +30,9 @@ Keys are loaded from:
 2) `./intermute.keys.yaml`
 
 See `intermute.keys.yaml.example` for the expected structure.
+
+If the keys file is missing, the server bootstraps a dev key for project `dev`
+on startup and logs the generated key and file path.
 
 ## Client Environment
 - `INTERMUTE_URL` (client-side) e.g. `http://localhost:7338`

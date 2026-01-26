@@ -47,9 +47,16 @@ func LoadKeyring(path string) (*Keyring, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return defaultKeyring(), nil
+			if _, err := BootstrapDevKey(path, "dev"); err != nil {
+				return nil, fmt.Errorf("bootstrap dev key: %w", err)
+			}
+			data, err = os.ReadFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("read keys file: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("read keys file: %w", err)
 		}
-		return nil, fmt.Errorf("read keys file: %w", err)
 	}
 	var cfg keysFile
 	if err := yaml.Unmarshal(data, &cfg); err != nil {

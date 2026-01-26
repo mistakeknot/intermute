@@ -3,6 +3,8 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -64,5 +66,21 @@ func TestNonLocalhostRequiresBearer(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200 with bearer, got %d", rr.Code)
+	}
+}
+
+func TestLoadKeyringCreatesDevKeyWhenMissing(t *testing.T) {
+	tmp := t.TempDir()
+	keysPath := filepath.Join(tmp, "intermute.keys.yaml")
+
+	ring, err := LoadKeyring(keysPath)
+	if err != nil {
+		t.Fatalf("load keyring: %v", err)
+	}
+	if _, err := os.Stat(keysPath); err != nil {
+		t.Fatalf("expected keys file to be created: %v", err)
+	}
+	if len(ring.keyToProject) != 1 {
+		t.Fatalf("expected 1 dev key, got %d", len(ring.keyToProject))
 	}
 }

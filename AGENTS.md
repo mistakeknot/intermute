@@ -36,6 +36,8 @@ Intermute is a real-time coordination and messaging service for Autarch agents. 
 - Localhost requests: allowed by default (AllowLocalhostWithoutAuth=true)
 - API key requests: require `Authorization: Bearer <key>` + `project` param
 - Keyring loaded from intermute.keys.yaml; maps key → project
+ - `intermute init --project <name>` creates a key entry in the keys file
+ - If the keys file is missing, the server bootstraps a dev key for project `dev` on startup
 
 ## Directory Structure
 
@@ -133,6 +135,9 @@ internal/
 ```bash
 # Run server
 go run ./cmd/intermute
+
+# Initialize auth keys for a project
+intermute init --project autarch
 
 # Run tests
 go test ./...
