@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -308,6 +309,53 @@ func TestFileReservation(t *testing.T) {
 	active, _ = st.ActiveReservations("autarch")
 	if len(active) != 0 {
 		t.Errorf("expected 0 active reservations after release, got %d", len(active))
+	}
+}
+
+func TestInboxCounts(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Send 3 messages to bob
+	for i := 1; i <= 3; i++ {
+		_, err := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+			ID:      fmt.Sprintf("m%d", i),
+			Project: "proj",
+			From:    "alice",
+			To:      []string{"bob"},
+			Body:    fmt.Sprintf("Message %d", i),
+		}})
+		if err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+
+	// Check counts before reading
+	total, unread, err := st.InboxCounts("proj", "bob")
+	if err != nil {
+		t.Fatalf("inbox counts: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("expected total=3, got %d", total)
+	}
+	if unread != 3 {
+		t.Errorf("expected unread=3, got %d", unread)
+	}
+
+	// Mark one as read
+	if err := st.MarkRead("proj", "m1", "bob"); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+
+	// Check counts after reading
+	total, unread, err = st.InboxCounts("proj", "bob")
+	if err != nil {
+		t.Fatalf("inbox counts: %v", err)
+	}
+	if total != 3 {
+		t.Errorf("expected total=3 after read, got %d", total)
+	}
+	if unread != 2 {
+		t.Errorf("expected unread=2 after read, got %d", unread)
 	}
 }
 

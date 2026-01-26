@@ -31,6 +31,8 @@ type Store interface {
 	MarkRead(project, messageID, agentID string) error
 	MarkAck(project, messageID, agentID string) error
 	RecipientStatus(project, messageID string) (map[string]*core.RecipientStatus, error)
+	// Inbox counts
+	InboxCounts(project, agentID string) (total int, unread int, err error)
 	// File reservations
 	Reserve(r core.Reservation) (*core.Reservation, error)
 	ReleaseReservation(id string) error
@@ -232,6 +234,12 @@ func (m *InMemory) MarkAck(project, messageID, agentID string) error {
 // RecipientStatus returns the read/ack status for all recipients (stub for in-memory store)
 func (m *InMemory) RecipientStatus(project, messageID string) (map[string]*core.RecipientStatus, error) {
 	return make(map[string]*core.RecipientStatus), nil // In-memory store doesn't track per-recipient status
+}
+
+// InboxCounts returns total and unread counts (stub for in-memory store)
+func (m *InMemory) InboxCounts(project, agentID string) (int, int, error) {
+	msgs := m.inbox[project][agentID]
+	return len(msgs), len(msgs), nil // In-memory doesn't track read status, so all are "unread"
 }
 
 // Reserve creates a file reservation (stub for in-memory store)

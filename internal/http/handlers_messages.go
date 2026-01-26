@@ -122,8 +122,13 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	agent := strings.TrimPrefix(r.URL.Path, "/api/inbox/")
-	agent = strings.Trim(agent, "/")
+	// Check if this is a counts request: /api/inbox/{agent}/counts
+	path := strings.TrimPrefix(r.URL.Path, "/api/inbox/")
+	if strings.HasSuffix(path, "/counts") {
+		s.handleInboxCounts(w, r)
+		return
+	}
+	agent := strings.Trim(path, "/")
 	if agent == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -168,6 +173,41 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(inboxResponse{Messages: apiMsgs, Cursor: lastCursor})
+}
+
+type inboxCountsResponse struct {
+	Total  int `json:"total"`
+	Unread int `json:"unread"`
+}
+
+func (s *Service) handleInboxCounts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	// Path: /api/inbox/{agent}/counts
+	path := strings.TrimPrefix(r.URL.Path, "/api/inbox/")
+	path = strings.TrimSuffix(path, "/counts")
+	agent := strings.Trim(path, "/")
+	if agent == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	info, _ := auth.FromContext(r.Context())
+	project := info.Project
+	if project == "" {
+		project = strings.TrimSpace(r.URL.Query().Get("project"))
+	}
+
+	total, unread, err := s.store.InboxCounts(project, agent)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(inboxCountsResponse{Total: total, Unread: unread})
 }
 
 type messageActionRequest struct {

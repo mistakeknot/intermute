@@ -783,6 +783,29 @@ func (s *Store) RecipientStatus(project, messageID string) (map[string]*core.Rec
 	return result, nil
 }
 
+// InboxCounts returns the total and unread message counts for an agent
+func (s *Store) InboxCounts(project, agentID string) (total int, unread int, err error) {
+	// Total count from inbox_index
+	row := s.db.QueryRow(
+		`SELECT COUNT(*) FROM inbox_index WHERE project = ? AND agent = ?`,
+		project, agentID,
+	)
+	if err := row.Scan(&total); err != nil {
+		return 0, 0, fmt.Errorf("count total: %w", err)
+	}
+
+	// Unread count from message_recipients (where read_at IS NULL)
+	row = s.db.QueryRow(
+		`SELECT COUNT(*) FROM message_recipients WHERE project = ? AND agent_id = ? AND read_at IS NULL`,
+		project, agentID,
+	)
+	if err := row.Scan(&unread); err != nil {
+		return 0, 0, fmt.Errorf("count unread: %w", err)
+	}
+
+	return total, unread, nil
+}
+
 // Reserve creates a new file reservation
 func (s *Store) Reserve(r core.Reservation) (*core.Reservation, error) {
 	if r.ID == "" {
