@@ -516,18 +516,31 @@ func (s *Store) RegisterAgent(agent core.Agent) (core.Agent, error) {
 	return agent, nil
 }
 
-func (s *Store) Heartbeat(agentID string) (core.Agent, error) {
+func (s *Store) Heartbeat(project, agentID string) (core.Agent, error) {
 	now := time.Now().UTC()
-	_, err := s.db.Exec(`UPDATE agents SET last_seen=? WHERE id=?`, now.Format(time.RFC3339Nano), agentID)
+	var query string
+	var args []any
+	if project != "" {
+		query = `UPDATE agents SET last_seen=? WHERE id=? AND project=?`
+		args = []any{now.Format(time.RFC3339Nano), agentID, project}
+	} else {
+		query = `UPDATE agents SET last_seen=? WHERE id=?`
+		args = []any{now.Format(time.RFC3339Nano), agentID}
+	}
+	res, err := s.db.Exec(query, args...)
 	if err != nil {
 		return core.Agent{}, fmt.Errorf("heartbeat: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return core.Agent{}, fmt.Errorf("agent not found")
 	}
 
 	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen FROM agents WHERE id=?`, agentID)
 	var (
-		id, sessionID, name, project, capsJSON, metaJSON, status, createdAt, lastSeen string
+		id, sessionID, name, proj, capsJSON, metaJSON, status, createdAt, lastSeen string
 	)
-	if err := row.Scan(&id, &sessionID, &name, &project, &capsJSON, &metaJSON, &status, &createdAt, &lastSeen); err != nil {
+	if err := row.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &createdAt, &lastSeen); err != nil {
 		return core.Agent{}, fmt.Errorf("heartbeat fetch: %w", err)
 	}
 	var caps []string
@@ -541,7 +554,7 @@ func (s *Store) Heartbeat(agentID string) (core.Agent, error) {
 		ID:           id,
 		SessionID:    sessionID,
 		Name:         name,
-		Project:      project,
+		Project:      proj,
 		Capabilities: caps,
 		Metadata:     meta,
 		Status:       status,

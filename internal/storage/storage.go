@@ -25,7 +25,7 @@ type Store interface {
 	ThreadMessages(project, threadID string, cursor uint64) ([]core.Message, error)
 	ListThreads(project, agent string, cursor uint64, limit int) ([]ThreadSummary, error)
 	RegisterAgent(agent core.Agent) (core.Agent, error)
-	Heartbeat(agentID string) (core.Agent, error)
+	Heartbeat(project, agentID string) (core.Agent, error)
 	ListAgents(project string) ([]core.Agent, error)
 }
 
@@ -187,9 +187,12 @@ func (m *InMemory) RegisterAgent(agent core.Agent) (core.Agent, error) {
 	return agent, nil
 }
 
-func (m *InMemory) Heartbeat(agentID string) (core.Agent, error) {
+func (m *InMemory) Heartbeat(project, agentID string) (core.Agent, error) {
 	agent, ok := m.agents[agentID]
 	if !ok {
+		return core.Agent{}, fmt.Errorf("agent not found")
+	}
+	if project != "" && agent.Project != project {
 		return core.Agent{}, fmt.Errorf("agent not found")
 	}
 	agent.LastSeen = time.Now().UTC()

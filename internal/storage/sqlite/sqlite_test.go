@@ -82,7 +82,7 @@ func TestSQLiteListAgentsOrderByLastSeen(t *testing.T) {
 	_, _ = st.RegisterAgent(core.Agent{Name: "agent-second", Project: "proj"})
 
 	// Heartbeat the first agent to make it more recent
-	_, _ = st.Heartbeat(a1.ID)
+	_, _ = st.Heartbeat("proj", a1.ID)
 
 	agents, err := st.ListAgents("proj")
 	if err != nil {

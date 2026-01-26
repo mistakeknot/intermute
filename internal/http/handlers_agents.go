@@ -152,7 +152,15 @@ func (s *Service) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	agent, err := s.store.Heartbeat(id)
+
+	// Enforce project scoping for API key auth
+	var project string
+	info, _ := auth.FromContext(r.Context())
+	if info.Mode == auth.ModeAPIKey {
+		project = info.Project
+	}
+
+	agent, err := s.store.Heartbeat(project, id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
