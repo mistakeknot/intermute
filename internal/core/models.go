@@ -56,3 +56,17 @@ type Agent struct {
 	LastSeen     time.Time
 	CreatedAt    time.Time
 }
+
+// RecipientStatus tracks read/ack status for a message recipient
+type RecipientStatus struct {
+	AgentID string     // Recipient agent name
+	Kind    string     // to, cc, or bcc
+	ReadAt  *time.Time // When the recipient read the message
+	AckAt   *time.Time // When the recipient acknowledged the message
+}
+
+// IsRead returns true if the recipient has read the message
+func (r *RecipientStatus) IsRead() bool { return r.ReadAt != nil }
+
+// IsAcked returns true if the recipient has acknowledged the message
+func (r *RecipientStatus) IsAcked() bool { return r.AckAt != nil }

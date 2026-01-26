@@ -27,6 +27,10 @@ type Store interface {
 	RegisterAgent(agent core.Agent) (core.Agent, error)
 	Heartbeat(project, agentID string) (core.Agent, error)
 	ListAgents(project string) ([]core.Agent, error)
+	// Per-recipient tracking
+	MarkRead(project, messageID, agentID string) error
+	MarkAck(project, messageID, agentID string) error
+	RecipientStatus(project, messageID string) (map[string]*core.RecipientStatus, error)
 }
 
 // InMemory is a minimal in-memory store for tests.
@@ -208,4 +212,19 @@ func (m *InMemory) ListAgents(project string) ([]core.Agent, error) {
 		}
 	}
 	return out, nil
+}
+
+// MarkRead marks a message as read by a specific recipient (stub for in-memory store)
+func (m *InMemory) MarkRead(project, messageID, agentID string) error {
+	return nil // In-memory store doesn't track per-recipient status
+}
+
+// MarkAck marks a message as acknowledged by a specific recipient (stub for in-memory store)
+func (m *InMemory) MarkAck(project, messageID, agentID string) error {
+	return nil // In-memory store doesn't track per-recipient status
+}
+
+// RecipientStatus returns the read/ack status for all recipients (stub for in-memory store)
+func (m *InMemory) RecipientStatus(project, messageID string) (map[string]*core.RecipientStatus, error) {
+	return make(map[string]*core.RecipientStatus), nil // In-memory store doesn't track per-recipient status
 }

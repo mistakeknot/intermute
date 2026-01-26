@@ -170,6 +170,10 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(inboxResponse{Messages: apiMsgs, Cursor: lastCursor})
 }
 
+type messageActionRequest struct {
+	Agent string `json:"agent"` // Agent performing the action
+}
+
 func (s *Service) handleMessageAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -198,7 +202,26 @@ func (s *Service) handleMessageAction(w http.ResponseWriter, r *http.Request) {
 	if project == "" {
 		project = strings.TrimSpace(r.URL.Query().Get("project"))
 	}
-	_, err := s.store.AppendEvent(core.Event{Type: evType, Project: project, Message: core.Message{ID: msgID, Project: project}})
+
+	// Parse request body to get agent ID (if provided)
+	var req messageActionRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	agentID := req.Agent
+	if agentID == "" {
+		agentID = r.URL.Query().Get("agent")
+	}
+
+	// Update per-recipient tracking if agent ID is provided
+	if agentID != "" {
+		switch action {
+		case "read":
+			_ = s.store.MarkRead(project, msgID, agentID)
+		case "ack":
+			_ = s.store.MarkAck(project, msgID, agentID)
+		}
+	}
+
+	_, err := s.store.AppendEvent(core.Event{Type: evType, Agent: agentID, Project: project, Message: core.Message{ID: msgID, Project: project}})
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

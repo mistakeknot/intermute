@@ -118,6 +118,16 @@ func (s *Store) AppendEvent(ev core.Event) (uint64, error) {
 				return 0, fmt.Errorf("insert inbox: %w", err)
 			}
 		}
+		// Insert into message_recipients for per-recipient tracking
+		if err := s.insertRecipients(project, ev.Message.ID, ev.Message.To, "to"); err != nil {
+			return 0, err
+		}
+		if err := s.insertRecipients(project, ev.Message.ID, ev.Message.CC, "cc"); err != nil {
+			return 0, err
+		}
+		if err := s.insertRecipients(project, ev.Message.ID, ev.Message.BCC, "bcc"); err != nil {
+			return 0, err
+		}
 		// Update thread_index if message has a thread ID
 		if ev.Message.ThreadID != "" {
 			participants := append([]string{ev.Message.From}, recipients...)
@@ -671,4 +681,104 @@ func migrateMessagesMetadata(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// insertRecipients adds recipients to the message_recipients table
+func (s *Store) insertRecipients(project, messageID string, agents []string, kind string) error {
+	for _, agent := range agents {
+		if _, err := s.db.Exec(
+			`INSERT INTO message_recipients (project, message_id, agent_id, kind)
+			 VALUES (?, ?, ?, ?)
+			 ON CONFLICT(project, message_id, agent_id) DO NOTHING`,
+			project, messageID, agent, kind,
+		); err != nil {
+			return fmt.Errorf("insert recipient %s: %w", agent, err)
+		}
+	}
+	return nil
+}
+
+// MarkRead marks a message as read by a specific recipient
+func (s *Store) MarkRead(project, messageID, agentID string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.Exec(
+		`UPDATE message_recipients SET read_at = ? WHERE project = ? AND message_id = ? AND agent_id = ? AND read_at IS NULL`,
+		now, project, messageID, agentID,
+	)
+	if err != nil {
+		return fmt.Errorf("mark read: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		// Either already read or not a recipient - check if recipient exists
+		var exists int
+		s.db.QueryRow(`SELECT 1 FROM message_recipients WHERE project = ? AND message_id = ? AND agent_id = ?`,
+			project, messageID, agentID).Scan(&exists)
+		if exists == 0 {
+			return fmt.Errorf("agent %s is not a recipient of message %s", agentID, messageID)
+		}
+	}
+	return nil
+}
+
+// MarkAck marks a message as acknowledged by a specific recipient
+func (s *Store) MarkAck(project, messageID, agentID string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.Exec(
+		`UPDATE message_recipients SET ack_at = ? WHERE project = ? AND message_id = ? AND agent_id = ? AND ack_at IS NULL`,
+		now, project, messageID, agentID,
+	)
+	if err != nil {
+		return fmt.Errorf("mark ack: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		var exists int
+		s.db.QueryRow(`SELECT 1 FROM message_recipients WHERE project = ? AND message_id = ? AND agent_id = ?`,
+			project, messageID, agentID).Scan(&exists)
+		if exists == 0 {
+			return fmt.Errorf("agent %s is not a recipient of message %s", agentID, messageID)
+		}
+	}
+	return nil
+}
+
+// RecipientStatus returns the read/ack status for all recipients of a message
+func (s *Store) RecipientStatus(project, messageID string) (map[string]*core.RecipientStatus, error) {
+	rows, err := s.db.Query(
+		`SELECT agent_id, kind, read_at, ack_at FROM message_recipients WHERE project = ? AND message_id = ?`,
+		project, messageID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query recipients: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]*core.RecipientStatus)
+	for rows.Next() {
+		var (
+			agentID, kind   string
+			readAt, ackAt   sql.NullString
+		)
+		if err := rows.Scan(&agentID, &kind, &readAt, &ackAt); err != nil {
+			return nil, fmt.Errorf("scan recipient: %w", err)
+		}
+		status := &core.RecipientStatus{
+			AgentID: agentID,
+			Kind:    kind,
+		}
+		if readAt.Valid {
+			t, _ := time.Parse(time.RFC3339Nano, readAt.String)
+			status.ReadAt = &t
+		}
+		if ackAt.Valid {
+			t, _ := time.Parse(time.RFC3339Nano, ackAt.String)
+			status.AckAt = &t
+		}
+		result[agentID] = status
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return result, nil
 }

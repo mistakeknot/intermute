@@ -259,6 +259,67 @@ func TestSQLiteThreadPaginationCursorFromPage(t *testing.T) {
 	}
 }
 
+func TestRecipientTracking(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	// Send message to multiple recipients
+	msg := core.Message{
+		ID:      "m1",
+		Project: "proj",
+		From:    "alice",
+		To:      []string{"bob", "charlie"},
+		CC:      []string{"dave"},
+		Subject: "Meeting",
+		Body:    "Let's meet",
+	}
+	_, err := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: msg})
+	if err != nil {
+		t.Fatalf("append event: %v", err)
+	}
+
+	// Mark read for one recipient
+	if err := st.MarkRead("proj", "m1", "bob"); err != nil {
+		t.Fatalf("mark read: %v", err)
+	}
+
+	// Check status
+	status, err := st.RecipientStatus("proj", "m1")
+	if err != nil {
+		t.Fatalf("recipient status: %v", err)
+	}
+	if len(status) != 3 { // bob, charlie, dave (To + CC)
+		t.Errorf("expected 3 recipients, got %d", len(status))
+	}
+
+	// Bob should be marked read
+	bobStatus, ok := status["bob"]
+	if !ok {
+		t.Fatal("bob not in status")
+	}
+	if bobStatus.ReadAt == nil {
+		t.Error("bob should be marked read")
+	}
+
+	// Charlie should not be marked read
+	charlieStatus, ok := status["charlie"]
+	if !ok {
+		t.Fatal("charlie not in status")
+	}
+	if charlieStatus.ReadAt != nil {
+		t.Error("charlie should not be marked read")
+	}
+
+	// Mark ack for bob
+	if err := st.MarkAck("proj", "m1", "bob"); err != nil {
+		t.Fatalf("mark ack: %v", err)
+	}
+
+	status, _ = st.RecipientStatus("proj", "m1")
+	if status["bob"].AckAt == nil {
+		t.Error("bob should be marked ack'd")
+	}
+}
+
 func TestMessageWithMetadata(t *testing.T) {
 	st := NewSQLiteTest(t)
 

@@ -37,6 +37,18 @@ CREATE TABLE IF NOT EXISTS inbox_index (
 
 CREATE INDEX IF NOT EXISTS idx_inbox_agent_cursor ON inbox_index(project, agent, cursor);
 
+CREATE TABLE IF NOT EXISTS message_recipients (
+  project TEXT NOT NULL DEFAULT '',
+  message_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'to',
+  read_at TEXT,
+  ack_at TEXT,
+  PRIMARY KEY (project, message_id, agent_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recipients_agent ON message_recipients(project, agent_id);
+
 CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY,
   session_id TEXT,
@@ -160,3 +172,39 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(project, status);
 CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(project, agent);
+
+-- CUJ (Critical User Journey) tables
+
+CREATE TABLE IF NOT EXISTS cujs (
+  id TEXT NOT NULL,
+  project TEXT NOT NULL DEFAULT '',
+  spec_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  persona TEXT,
+  priority TEXT NOT NULL DEFAULT 'medium',
+  entry_point TEXT,
+  exit_point TEXT,
+  steps_json TEXT,
+  success_criteria_json TEXT,
+  error_recovery_json TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (project, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cujs_spec ON cujs(project, spec_id);
+CREATE INDEX IF NOT EXISTS idx_cujs_status ON cujs(project, status);
+CREATE INDEX IF NOT EXISTS idx_cujs_priority ON cujs(project, priority);
+
+CREATE TABLE IF NOT EXISTS cuj_feature_links (
+  project TEXT NOT NULL DEFAULT '',
+  cuj_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  linked_at TEXT NOT NULL,
+  PRIMARY KEY (project, cuj_id, feature_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cuj_links_cuj ON cuj_feature_links(project, cuj_id);
+CREATE INDEX IF NOT EXISTS idx_cuj_links_feature ON cuj_feature_links(project, feature_id);
