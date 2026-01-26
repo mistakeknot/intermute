@@ -171,6 +171,25 @@ When using API key auth, POST operations must include `project` field matching t
 6. **Localhost bypass** - Applies to 127.0.0.1 only; LAN origins require API key
 7. **No ack persistence** - Ack/read events logged but no status columns updated
 
+## Downstream Dependencies
+
+| Repo | Uses | Location |
+|------|------|----------|
+| Autarch | `pkg/embedded/`, domain API, core types | `/root/projects/Autarch` |
+
+**After pushing changes to:**
+- `pkg/embedded/` - Autarch embeds this server
+- `internal/core/domain.go` - Domain types used by Autarch client
+- `internal/http/handlers_domain.go` - API endpoints Autarch calls
+- `internal/storage/sqlite/domain.go` - Schema changes
+
+**Notify downstream:**
+```bash
+cd /root/projects/Autarch
+go get github.com/mistakeknot/intermute@latest
+go build ./cmd/autarch  # Verify it compiles
+```
+
 ## Testing
 
 ```bash
