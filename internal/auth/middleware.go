@@ -72,24 +72,27 @@ func writeUnauthorized(w http.ResponseWriter) {
 }
 
 func isLocalRequest(r *http.Request) bool {
-	if ip := forwardedFor(r.Header.Get("X-Forwarded-For")); ip != "" {
-		if parsed := net.ParseIP(ip); parsed != nil {
-			return parsed.IsLoopback()
-		}
-		if strings.EqualFold(ip, "localhost") {
-			return true
-		}
-	}
 	host := r.RemoteAddr
 	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		host = h
 	}
 	host = strings.TrimSpace(host)
-	if strings.EqualFold(host, "localhost") {
-		return true
+	remoteIsLoopback := strings.EqualFold(host, "localhost")
+	if !remoteIsLoopback {
+		if parsed := net.ParseIP(host); parsed != nil {
+			remoteIsLoopback = parsed.IsLoopback()
+		}
 	}
-	parsed := net.ParseIP(host)
-	return parsed != nil && parsed.IsLoopback()
+	if !remoteIsLoopback {
+		return false
+	}
+	if ip := forwardedFor(r.Header.Get("X-Forwarded-For")); ip != "" {
+		if parsed := net.ParseIP(ip); parsed != nil {
+			return parsed.IsLoopback()
+		}
+		return strings.EqualFold(ip, "localhost")
+	}
+	return true
 }
 
 func forwardedFor(v string) string {
