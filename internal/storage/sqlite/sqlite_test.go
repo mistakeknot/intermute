@@ -312,6 +312,108 @@ func TestFileReservation(t *testing.T) {
 	}
 }
 
+func TestFileReservationOverlapSubsetAndSuperset(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	_, err := st.Reserve(core.Reservation{
+		AgentID:     "agent-1",
+		Project:     "autarch",
+		PathPattern: "pkg/events/*.go",
+		Exclusive:   true,
+	})
+	if err != nil {
+		t.Fatalf("seed reserve: %v", err)
+	}
+
+	_, err = st.Reserve(core.Reservation{
+		AgentID:     "agent-2",
+		Project:     "autarch",
+		PathPattern: "pkg/events/reconcile.go",
+		Exclusive:   true,
+	})
+	if err == nil {
+		t.Fatal("expected overlap conflict for subset path")
+	}
+
+	st2 := NewSQLiteTest(t)
+	_, err = st2.Reserve(core.Reservation{
+		AgentID:     "agent-1",
+		Project:     "autarch",
+		PathPattern: "pkg/events/reconcile.go",
+		Exclusive:   true,
+	})
+	if err != nil {
+		t.Fatalf("seed literal reserve: %v", err)
+	}
+	_, err = st2.Reserve(core.Reservation{
+		AgentID:     "agent-2",
+		Project:     "autarch",
+		PathPattern: "pkg/events/*.go",
+		Exclusive:   true,
+	})
+	if err == nil {
+		t.Fatal("expected overlap conflict for superset glob")
+	}
+}
+
+func TestFileReservationOverlapPartial(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	_, err := st.Reserve(core.Reservation{
+		AgentID:     "agent-1",
+		Project:     "autarch",
+		PathPattern: "pkg/*/reconcile.go",
+		Exclusive:   true,
+	})
+	if err != nil {
+		t.Fatalf("seed reserve: %v", err)
+	}
+
+	_, err = st.Reserve(core.Reservation{
+		AgentID:     "agent-2",
+		Project:     "autarch",
+		PathPattern: "pkg/events/*.go",
+		Exclusive:   true,
+	})
+	if err == nil {
+		t.Fatal("expected overlap conflict for partial glob intersection")
+	}
+}
+
+func TestFileReservationSharedOverlapSemantics(t *testing.T) {
+	st := NewSQLiteTest(t)
+
+	_, err := st.Reserve(core.Reservation{
+		AgentID:     "agent-1",
+		Project:     "autarch",
+		PathPattern: "pkg/events/*.go",
+		Exclusive:   false,
+	})
+	if err != nil {
+		t.Fatalf("seed shared reserve: %v", err)
+	}
+
+	_, err = st.Reserve(core.Reservation{
+		AgentID:     "agent-2",
+		Project:     "autarch",
+		PathPattern: "pkg/events/reconcile.go",
+		Exclusive:   false,
+	})
+	if err != nil {
+		t.Fatalf("shared/shared overlap should be allowed: %v", err)
+	}
+
+	_, err = st.Reserve(core.Reservation{
+		AgentID:     "agent-3",
+		Project:     "autarch",
+		PathPattern: "pkg/events/reconcile.go",
+		Exclusive:   true,
+	})
+	if err == nil {
+		t.Fatal("expected overlap conflict for exclusive against active shared")
+	}
+}
+
 func TestInboxCounts(t *testing.T) {
 	st := NewSQLiteTest(t)
 

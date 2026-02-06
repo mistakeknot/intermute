@@ -1,12 +1,14 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -254,11 +256,11 @@ func (s *Store) ThreadMessages(project, threadID string, cursor uint64) ([]core.
 	var out []core.Message
 	for rows.Next() {
 		var (
-			cur                                                                            int64
-			proj                                                                           string
-			msgID, thID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance     string
-			ackRequired                                                                    int
-			createdAt                                                                      string
+			cur                                                                        int64
+			proj                                                                       string
+			msgID, thID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance string
+			ackRequired                                                                int
+			createdAt                                                                  string
 		)
 		if err := rows.Scan(&cur, &proj, &msgID, &thID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan thread: %w", err)
@@ -270,7 +272,7 @@ func (s *Store) ThreadMessages(project, threadID string, cursor uint64) ([]core.
 		parsed, _ := time.Parse(time.RFC3339Nano, createdAt)
 		out = append(out, core.Message{
 			ID:          msgID,
-			ThreadID:   thID,
+			ThreadID:    thID,
 			Project:     proj,
 			From:        fromAgent,
 			To:          to,
@@ -760,8 +762,8 @@ func (s *Store) RecipientStatus(project, messageID string) (map[string]*core.Rec
 	result := make(map[string]*core.RecipientStatus)
 	for rows.Next() {
 		var (
-			agentID, kind   string
-			readAt, ackAt   sql.NullString
+			agentID, kind string
+			readAt, ackAt sql.NullString
 		)
 		if err := rows.Scan(&agentID, &kind, &readAt, &ackAt); err != nil {
 			return nil, fmt.Errorf("scan recipient: %w", err)
@@ -821,12 +823,64 @@ func (s *Store) Reserve(r core.Reservation) (*core.Reservation, error) {
 	}
 	r.ExpiresAt = now.Add(r.TTL) // Negative TTL will create already-expired reservation
 
+	// Validate the incoming pattern early so callers get deterministic failures.
+	if _, err := globPatternsOverlap(r.PathPattern, r.PathPattern); err != nil {
+		return nil, fmt.Errorf("invalid reservation pattern %q: %w", r.PathPattern, err)
+	}
+
 	exclusive := 0
 	if r.Exclusive {
 		exclusive = 1
 	}
 
-	_, err := s.db.Exec(
+	tx, err := s.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin reservation tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	activeRows, err := tx.Query(
+		`SELECT id, path_pattern, exclusive
+		 FROM file_reservations
+		 WHERE project = ? AND released_at IS NULL AND expires_at > ? AND agent_id != ?`,
+		r.Project, now.Format(time.RFC3339Nano), r.AgentID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query active reservations: %w", err)
+	}
+	defer activeRows.Close()
+
+	for activeRows.Next() {
+		var (
+			existingID      string
+			existingPattern string
+			existingExcl    int
+		)
+		if err := activeRows.Scan(&existingID, &existingPattern, &existingExcl); err != nil {
+			return nil, fmt.Errorf("scan active reservation: %w", err)
+		}
+		// Shared reservations can overlap each other.
+		if !r.Exclusive && existingExcl == 0 {
+			continue
+		}
+		overlap, err := globPatternsOverlap(r.PathPattern, existingPattern)
+		if err != nil {
+			return nil, fmt.Errorf("check reservation overlap against %q: %w", existingPattern, err)
+		}
+		if overlap {
+			return nil, fmt.Errorf("reservation conflict with active reservation %s (%s)", existingID, existingPattern)
+		}
+	}
+	if err := activeRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active reservations: %w", err)
+	}
+	if err := activeRows.Close(); err != nil {
+		return nil, fmt.Errorf("close active reservations: %w", err)
+	}
+
+	_, err = tx.Exec(
 		`INSERT INTO file_reservations (id, agent_id, project, path_pattern, exclusive, reason, created_at, expires_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.ID, r.AgentID, r.Project, r.PathPattern, exclusive, r.Reason,
@@ -834,6 +888,10 @@ func (s *Store) Reserve(r core.Reservation) (*core.Reservation, error) {
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert reservation: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit reservation tx: %w", err)
 	}
 	return &r, nil
 }
@@ -954,6 +1012,344 @@ func (s *Store) scanReservationsWithRelease(rows *sql.Rows) ([]core.Reservation,
 		return nil, fmt.Errorf("rows: %w", err)
 	}
 	return out, nil
+}
+
+type globTokenKind int
+
+const (
+	globTokenLiteral globTokenKind = iota
+	globTokenAny
+	globTokenStar
+	globTokenClass
+)
+
+type runeRange struct {
+	lo rune
+	hi rune
+}
+
+type globToken struct {
+	kind   globTokenKind
+	lit    rune
+	ranges []runeRange
+}
+
+const maxRune = rune(0x10FFFF)
+
+var nonSeparatorRanges = []runeRange{
+	{lo: 0, hi: '/' - 1},
+	{lo: '/' + 1, hi: maxRune},
+}
+
+func globPatternsOverlap(a, b string) (bool, error) {
+	a = filepath.ToSlash(a)
+	b = filepath.ToSlash(b)
+
+	segmentsA := strings.Split(a, "/")
+	segmentsB := strings.Split(b, "/")
+	if len(segmentsA) != len(segmentsB) {
+		return false, nil
+	}
+
+	for i := range segmentsA {
+		overlap, err := segmentPatternsOverlap(segmentsA[i], segmentsB[i])
+		if err != nil {
+			return false, err
+		}
+		if !overlap {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+func segmentPatternsOverlap(a, b string) (bool, error) {
+	tokensA, err := parseGlobSegment(a)
+	if err != nil {
+		return false, err
+	}
+	tokensB, err := parseGlobSegment(b)
+	if err != nil {
+		return false, err
+	}
+
+	type state struct {
+		i int
+		j int
+	}
+
+	addClosure := func(initial state, seen map[state]struct{}, queue *[]state) {
+		stack := []state{initial}
+		for len(stack) > 0 {
+			curr := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if _, ok := seen[curr]; ok {
+				continue
+			}
+			seen[curr] = struct{}{}
+			*queue = append(*queue, curr)
+			if curr.i < len(tokensA) && tokensA[curr.i].kind == globTokenStar {
+				stack = append(stack, state{i: curr.i + 1, j: curr.j})
+			}
+			if curr.j < len(tokensB) && tokensB[curr.j].kind == globTokenStar {
+				stack = append(stack, state{i: curr.i, j: curr.j + 1})
+			}
+		}
+	}
+
+	seen := make(map[state]struct{})
+	queue := make([]state, 0, (len(tokensA)+1)*(len(tokensB)+1))
+	addClosure(state{i: 0, j: 0}, seen, &queue)
+
+	for idx := 0; idx < len(queue); idx++ {
+		curr := queue[idx]
+		if curr.i == len(tokensA) && curr.j == len(tokensB) {
+			return true, nil
+		}
+		if curr.i == len(tokensA) || curr.j == len(tokensB) {
+			continue
+		}
+
+		aNext, aRanges := tokenConsume(tokensA, curr.i)
+		bNext, bRanges := tokenConsume(tokensB, curr.j)
+		if !rangesOverlap(aRanges, bRanges) {
+			continue
+		}
+
+		addClosure(state{i: aNext, j: bNext}, seen, &queue)
+	}
+
+	return false, nil
+}
+
+func tokenConsume(tokens []globToken, idx int) (next int, ranges []runeRange) {
+	tok := tokens[idx]
+	if tok.kind == globTokenStar {
+		return idx, nonSeparatorRanges
+	}
+	if tok.kind == globTokenLiteral {
+		return idx + 1, []runeRange{{lo: tok.lit, hi: tok.lit}}
+	}
+	return idx + 1, tok.ranges
+}
+
+func parseGlobSegment(segment string) ([]globToken, error) {
+	runes := []rune(segment)
+	tokens := make([]globToken, 0, len(runes))
+
+	for i := 0; i < len(runes); {
+		ch := runes[i]
+		switch ch {
+		case '*':
+			tokens = append(tokens, globToken{kind: globTokenStar})
+			i++
+		case '?':
+			tokens = append(tokens, globToken{kind: globTokenAny, ranges: nonSeparatorRanges})
+			i++
+		case '[':
+			tok, next, err := parseGlobClass(runes, i)
+			if err != nil {
+				return nil, err
+			}
+			tokens = append(tokens, tok)
+			i = next
+		case '\\':
+			if i+1 >= len(runes) {
+				return nil, fmt.Errorf("bad pattern")
+			}
+			tokens = append(tokens, globToken{kind: globTokenLiteral, lit: runes[i+1]})
+			i += 2
+		default:
+			tokens = append(tokens, globToken{kind: globTokenLiteral, lit: ch})
+			i++
+		}
+	}
+
+	return tokens, nil
+}
+
+func parseGlobClass(runes []rune, start int) (globToken, int, error) {
+	i := start + 1
+	if i >= len(runes) {
+		return globToken{}, 0, fmt.Errorf("bad pattern")
+	}
+	negated := false
+	if runes[i] == '^' {
+		negated = true
+		i++
+	}
+
+	var ranges []runeRange
+	hadItem := false
+	closed := false
+
+	for i < len(runes) {
+		if runes[i] == ']' && hadItem {
+			i++
+			closed = true
+			break
+		}
+
+		lo, next, err := readClassRune(runes, i)
+		if err != nil {
+			return globToken{}, 0, err
+		}
+		i = next
+
+		if i+1 < len(runes) && runes[i] == '-' && runes[i+1] != ']' {
+			hi, nextHi, err := readClassRune(runes, i+1)
+			if err != nil {
+				return globToken{}, 0, err
+			}
+			if hi < lo {
+				return globToken{}, 0, fmt.Errorf("bad pattern")
+			}
+			ranges = append(ranges, runeRange{lo: lo, hi: hi})
+			i = nextHi
+			hadItem = true
+			continue
+		}
+
+		ranges = append(ranges, runeRange{lo: lo, hi: lo})
+		hadItem = true
+	}
+
+	if !closed {
+		return globToken{}, 0, fmt.Errorf("bad pattern")
+	}
+
+	ranges = normalizeRanges(ranges)
+	if negated {
+		ranges = subtractRanges(nonSeparatorRanges, ranges)
+	} else {
+		ranges = intersectRanges(ranges, nonSeparatorRanges)
+	}
+
+	return globToken{kind: globTokenClass, ranges: ranges}, i, nil
+}
+
+func readClassRune(runes []rune, idx int) (rune, int, error) {
+	if idx >= len(runes) {
+		return 0, 0, fmt.Errorf("bad pattern")
+	}
+	if runes[idx] != '\\' {
+		return runes[idx], idx + 1, nil
+	}
+	if idx+1 >= len(runes) {
+		return 0, 0, fmt.Errorf("bad pattern")
+	}
+	return runes[idx+1], idx + 2, nil
+}
+
+func rangesOverlap(a, b []runeRange) bool {
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i].hi < b[j].lo {
+			i++
+			continue
+		}
+		if b[j].hi < a[i].lo {
+			j++
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func intersectRanges(a, b []runeRange) []runeRange {
+	a = normalizeRanges(a)
+	b = normalizeRanges(b)
+	out := make([]runeRange, 0)
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		lo := maxIntRune(a[i].lo, b[j].lo)
+		hi := minIntRune(a[i].hi, b[j].hi)
+		if lo <= hi {
+			out = append(out, runeRange{lo: lo, hi: hi})
+		}
+		if a[i].hi < b[j].hi {
+			i++
+		} else {
+			j++
+		}
+	}
+	return out
+}
+
+func subtractRanges(base, subtract []runeRange) []runeRange {
+	base = normalizeRanges(base)
+	subtract = normalizeRanges(subtract)
+
+	out := make([]runeRange, 0, len(base))
+	for _, b := range base {
+		current := []runeRange{b}
+		for _, s := range subtract {
+			next := make([]runeRange, 0, len(current)+1)
+			for _, c := range current {
+				if s.hi < c.lo || s.lo > c.hi {
+					next = append(next, c)
+					continue
+				}
+				if s.lo > c.lo {
+					next = append(next, runeRange{lo: c.lo, hi: s.lo - 1})
+				}
+				if s.hi < c.hi {
+					next = append(next, runeRange{lo: s.hi + 1, hi: c.hi})
+				}
+			}
+			current = next
+			if len(current) == 0 {
+				break
+			}
+		}
+		out = append(out, current...)
+	}
+	return out
+}
+
+func normalizeRanges(ranges []runeRange) []runeRange {
+	if len(ranges) <= 1 {
+		return ranges
+	}
+
+	cp := append([]runeRange(nil), ranges...)
+	sort.Slice(cp, func(i, j int) bool {
+		if cp[i].lo == cp[j].lo {
+			return cp[i].hi < cp[j].hi
+		}
+		return cp[i].lo < cp[j].lo
+	})
+
+	out := make([]runeRange, 0, len(cp))
+	current := cp[0]
+	for _, rr := range cp[1:] {
+		if rr.lo <= current.hi+1 {
+			if rr.hi > current.hi {
+				current.hi = rr.hi
+			}
+			continue
+		}
+		out = append(out, current)
+		current = rr
+	}
+	out = append(out, current)
+	return out
+}
+
+func maxIntRune(a, b rune) rune {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minIntRune(a, b rune) rune {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // migrateDomainVersions adds version columns to domain tables (specs, epics, stories, tasks)
