@@ -35,6 +35,7 @@ type Store interface {
 	InboxCounts(project, agentID string) (total int, unread int, err error)
 	// File reservations
 	Reserve(r core.Reservation) (*core.Reservation, error)
+	GetReservation(id string) (*core.Reservation, error)
 	ReleaseReservation(id string) error
 	ActiveReservations(project string) ([]core.Reservation, error)
 	AgentReservations(agentID string) ([]core.Reservation, error)
@@ -45,8 +46,8 @@ type InMemory struct {
 	cursor      uint64
 	agents      map[string]core.Agent
 	inbox       map[string]map[string][]core.Message
-	messages    map[string]map[string]core.Message       // project -> messageID -> message
-	threadIndex map[string]map[string]map[string]uint64  // project -> threadID -> agent -> lastCursor
+	messages    map[string]map[string]core.Message      // project -> messageID -> message
+	threadIndex map[string]map[string]map[string]uint64 // project -> threadID -> agent -> lastCursor
 }
 
 func NewInMemory() *InMemory {
@@ -245,6 +246,11 @@ func (m *InMemory) InboxCounts(project, agentID string) (int, int, error) {
 // Reserve creates a file reservation (stub for in-memory store)
 func (m *InMemory) Reserve(r core.Reservation) (*core.Reservation, error) {
 	return &r, nil // In-memory store doesn't track reservations
+}
+
+// GetReservation returns a reservation by ID (stub for in-memory store)
+func (m *InMemory) GetReservation(id string) (*core.Reservation, error) {
+	return nil, fmt.Errorf("reservation not found")
 }
 
 // ReleaseReservation releases a file reservation (stub for in-memory store)

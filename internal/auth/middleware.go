@@ -18,6 +18,7 @@ const (
 type Info struct {
 	Mode      Mode
 	Project   string
+	AgentID   string
 	Localhost bool
 }
 
@@ -34,8 +35,9 @@ func Middleware(ring *Keyring) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			agentID := strings.TrimSpace(r.Header.Get("X-Agent-ID"))
 			if ring.AllowLocalhostWithoutAuth && isLocalRequest(r) {
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), contextKey{}, Info{Mode: ModeLocalhost, Localhost: true})))
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), contextKey{}, Info{Mode: ModeLocalhost, AgentID: agentID, Localhost: true})))
 				return
 			}
 			project, ok := authorize(r, ring)
@@ -43,7 +45,7 @@ func Middleware(ring *Keyring) func(http.Handler) http.Handler {
 				writeUnauthorized(w)
 				return
 			}
-			info := Info{Mode: ModeAPIKey, Project: project, Localhost: false}
+			info := Info{Mode: ModeAPIKey, Project: project, AgentID: agentID, Localhost: false}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), contextKey{}, info)))
 		})
 	}

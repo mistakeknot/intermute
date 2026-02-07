@@ -896,6 +896,39 @@ func (s *Store) Reserve(r core.Reservation) (*core.Reservation, error) {
 	return &r, nil
 }
 
+// GetReservation returns a reservation by ID
+func (s *Store) GetReservation(id string) (*core.Reservation, error) {
+	var (
+		res                  core.Reservation
+		exclusive            int
+		createdAt, expiresAt string
+		releasedAt           sql.NullString
+	)
+	err := s.db.QueryRow(
+		`SELECT id, agent_id, project, path_pattern, exclusive, reason, created_at, expires_at, released_at
+		 FROM file_reservations
+		 WHERE id = ?`,
+		id,
+	).Scan(
+		&res.ID, &res.AgentID, &res.Project, &res.PathPattern, &exclusive, &res.Reason, &createdAt, &expiresAt, &releasedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("reservation not found")
+		}
+		return nil, fmt.Errorf("get reservation: %w", err)
+	}
+
+	res.Exclusive = exclusive == 1
+	res.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+	res.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expiresAt)
+	if releasedAt.Valid {
+		t, _ := time.Parse(time.RFC3339Nano, releasedAt.String)
+		res.ReleasedAt = &t
+	}
+	return &res, nil
+}
+
 // ReleaseReservation marks a reservation as released
 func (s *Store) ReleaseReservation(id string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)

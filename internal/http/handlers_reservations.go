@@ -58,6 +58,7 @@ func toAPIReservation(r core.Reservation) apiReservation {
 // ReservationStore is the subset of Store methods needed for reservation handlers
 type ReservationStore interface {
 	Reserve(r core.Reservation) (*core.Reservation, error)
+	GetReservation(id string) (*core.Reservation, error)
 	ReleaseReservation(id string) error
 	ActiveReservations(project string) ([]core.Reservation, error)
 	AgentReservations(agentID string) ([]core.Reservation, error)
@@ -167,6 +168,20 @@ func (s *Service) listReservations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) releaseReservation(w http.ResponseWriter, r *http.Request, id string) {
+	reservation, err := s.store.GetReservation(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		return
+	}
+	info, _ := auth.FromContext(r.Context())
+	if reservation.AgentID != info.AgentID {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
 	if err := s.store.ReleaseReservation(id); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			w.WriteHeader(http.StatusNotFound)

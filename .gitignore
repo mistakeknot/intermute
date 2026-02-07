@@ -1,3 +1,7 @@
 /tmp/
 *.db
 *.sqlite
+
+# Auracoil
+.auracoil/cache/
+.auracoil/oracle/

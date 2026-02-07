@@ -279,6 +279,14 @@ func TestFileReservation(t *testing.T) {
 		t.Error("expected reservation ID")
 	}
 
+	got, err := st.GetReservation(res.ID)
+	if err != nil {
+		t.Fatalf("get reservation: %v", err)
+	}
+	if got.AgentID != "agent-1" {
+		t.Fatalf("expected reservation owner agent-1, got %s", got.AgentID)
+	}
+
 	// Check active reservations
 	active, err := st.ActiveReservations("autarch")
 	if err != nil {
@@ -309,6 +317,10 @@ func TestFileReservation(t *testing.T) {
 	active, _ = st.ActiveReservations("autarch")
 	if len(active) != 0 {
 		t.Errorf("expected 0 active reservations after release, got %d", len(active))
+	}
+
+	if _, err := st.GetReservation("does-not-exist"); err == nil {
+		t.Fatal("expected get reservation to fail for missing id")
 	}
 }
 
