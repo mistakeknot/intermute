@@ -2,21 +2,21 @@
 
 ## Overview
 
-Intermute is a real-time coordination and messaging service for Autarch agents. It handles agent lifecycle (registration, heartbeats), project-scoped messaging with threading, and event sourcing of domain entities (specs, epics, stories, tasks). Acts as the central hub for multi-agent orchestration with REST + WebSocket delivery.
+Intermute is a real-time coordination and messaging service for Autarch agents. It handles agent lifecycle (registration, heartbeats), project-scoped messaging with threading, and event sourcing of domain entities (specs, epics, stories, tasks, insights, sessions). Acts as the central hub for multi-agent orchestration with REST + WebSocket delivery.
 
 ## Quick Reference
 
 | Item | Value |
 |------|-------|
 | Port | 7338 |
-| Start | `go run ./cmd/intermute` |
+| Start | `go run ./cmd/intermute serve` |
 | Tests | `go test ./...` |
 | Database | SQLite (intermute.db) |
 | Auth config | intermute.keys.yaml (`INTERMUTE_KEYS_FILE` env var) |
 
 ## Architecture
 
-**Stack:** Go 1.24, SQLite (modernc.org), nhooyr WebSocket
+**Stack:** Go 1.24 (toolchain `go1.24.12`), SQLite (modernc.org/sqlite), nhooyr WebSocket
 
 **Request Flow:**
 1. HTTP request → auth middleware → handler → service → store
@@ -34,8 +34,9 @@ Intermute is a real-time coordination and messaging service for Autarch agents. 
 
 **Authentication:**
 - Localhost requests: allowed by default (AllowLocalhostWithoutAuth=true)
-- API key requests: require `Authorization: Bearer <key>` + `project` param
-- Keyring loaded from intermute.keys.yaml; maps key → project
+- Non-localhost requests: require `Authorization: Bearer <key>`.
+- When a bearer key is used, `project` is required on: `POST /api/agents` and `POST /api/messages`.
+- Keyring loaded from `INTERMUTE_KEYS_FILE` (fallback `./intermute.keys.yaml`); maps key → project
  - `intermute init --project <name>` creates a key entry in the keys file
  - If the keys file is missing, the server bootstraps a dev key for project `dev` on startup
 
@@ -134,19 +135,36 @@ internal/
 
 ```bash
 # Run server
-go run ./cmd/intermute
+go run ./cmd/intermute serve
 
 # Initialize auth keys for a project
-intermute init --project autarch
+go run ./cmd/intermute init --project autarch
 
 # Run tests
 go test ./...
 
 # Run with custom keys file
-INTERMUTE_KEYS_FILE=/path/to/keys.yaml go run ./cmd/intermute
+INTERMUTE_KEYS_FILE=/path/to/keys.yaml go run ./cmd/intermute serve
 
 # Build binary
 go build -o intermute ./cmd/intermute
+./intermute serve
+```
+
+### Server CLI flags
+
+`intermute serve` supports:
+
+- `--host` (default: `127.0.0.1`)
+- `--port` (default: `7338`)
+- `--db` (default: `intermute.db`)
+
+### Keys file path
+
+`intermute init` accepts `--keys-file` to write keys to a specific location.
+
+```bash
+go run ./cmd/intermute init --project autarch --keys-file ./intermute.keys.yaml
 ```
 
 ## Authentication Model
@@ -165,6 +183,13 @@ projects:
 ```
 
 When using API key auth, POST operations must include `project` field matching the key's project.
+
+## Client Environment
+
+- `INTERMUTE_URL` (client-side) e.g. `http://localhost:7338`
+- `INTERMUTE_API_KEY` (optional; required for non-localhost)
+- `INTERMUTE_PROJECT` (required when `INTERMUTE_API_KEY` is set)
+- `INTERMUTE_AGENT_NAME` (optional override)
 
 ## Gotchas
 
@@ -215,3 +240,21 @@ Test patterns:
 - `sqlite_test.go`: In-memory SQLite with cursor/thread/migration tests
 - `handlers_*_test.go`: httptest.Server integration tests
 - `client_test.go`: Mock server for SDK validation
+
+<!-- auracoil:begin -->
+## Auracoil Review Notes
+
+_This section is maintained by Auracoil (GPT-5.2 Pro reviewer). Do not edit manually._
+
+### Review metadata
+- **Last reviewed:** 2026-02-07
+- **Reviewed commit:** 2e9e98e
+- **Reviewer:** Auracoil (GPT-5.2 Pro)
+- **Suggestions:** 8 (all approved)
+
+### Key corrections applied
+- Start command: `go run ./cmd/intermute` → `go run ./cmd/intermute serve` (root cmd has no Run)
+- Auth docs: clarified non-localhost requirement, per-endpoint `project` requirement
+- Added `serve` flags, `init --keys-file`, client env vars documentation
+- Completed domain entity list (added insights, sessions)
+<!-- auracoil:end -->

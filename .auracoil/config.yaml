@@ -1,0 +1,40 @@
+# Auracoil Configuration
+# Documentation: https://github.com/your-org/auracoil
+
+version: '1.0'
+analysis:
+  maxFiles: 50
+  maxTotalSize: 500000
+  maxTokens: 100000
+exclude:
+  - '**/node_modules/**'
+  - '**/.git/**'
+  - '**/dist/**'
+  - '**/build/**'
+  - '**/target/**'
+  - '**/__pycache__/**'
+  - '**/venv/**'
+  - '**/.venv/**'
+  - '**/vendor/**'
+  - '**/coverage/**'
+  - '**/.next/**'
+  - '**/.nuxt/**'
+  - '**/*.min.js'
+  - '**/*.bundle.js'
+  - '**/package-lock.json'
+  - '**/yarn.lock'
+  - '**/pnpm-lock.yaml'
+  - '**/.env*'
+  - '**/credentials*'
+  - '**/secrets*'
+  - '**/*.pem'
+  - '**/*.key'
+include:
+  - .env.example
+  - .env.template
+oracle:
+  model: gpt-5.2-pro
+  timeout: 600000
+generate:
+  outputStability: true
+  sectionMarkers: true

@@ -1,0 +1,69 @@
+{
+"suggestions": [
+{
+"id": "quickref-start-serve",
+"severity": "high",
+"section": "Quick Reference",
+"type": "correct",
+"suggestion": "In the Quick Reference table, replace the Start row:\n\n`| Start | `go run ./cmd/intermute` |`\n\nwith:\n\n`| Start | `go run ./cmd/intermute serve` |`",
+"evidence": "`cmd/intermute/main.go` wires Cobra subcommands (`root.AddCommand(serveCmd())`) and the server startup logic lives inside `serveCmd()` (`Use: \"serve\"`, `RunE: ... srv.Start()`). The root command has no `Run`/`RunE`, so `go run ./cmd/intermute` alone does not start the server."
+},
+{
+"id": "commands-block-serve-init",
+"severity": "high",
+"section": "Commands",
+"type": "correct",
+"suggestion": "Replace the entire Commands section code block with the following (so it uses Cobra subcommands correctly):\n\n`bash\n# Run server\ngo run ./cmd/intermute serve\n\n# Initialize auth keys for a project\ngo run ./cmd/intermute init --project autarch\n\n# Run tests\ngo test ./...\n\n# Run with custom keys file\nINTERMUTE_KEYS_FILE=/path/to/keys.yaml go run ./cmd/intermute serve\n\n# Build binary\ngo build -o intermute ./cmd/intermute\n./intermute serve\n`",
+"evidence": "`cmd/intermute/main.go` defines `serve` and `init` as subcommands (`Use: \"serve\"` / `Use: \"init\"`). There is no root command behavior that starts the server without `serve`, so the current `go run ./cmd/intermute` examples are inaccurate."
+},
+{
+"id": "doc-serve-flags",
+"severity": "medium",
+"section": "Commands",
+"type": "add",
+"suggestion": "Add the following markdown immediately after the Commands code block to document the supported `serve` flags and defaults:\n\n``md\n### Server CLI flags\n\n`intermute serve` supports:\n\n- `--host` (default: `127.0.0.1`)\n- `--port` (default: `7338`)\n- `--db` (default: `intermute.db`)\n``\n",
+"evidence": "`cmd/intermute/main.go` defines these flags on the `serve` command: `--port` default `7338`, `--host` default `127.0.0.1`, and `--db` default `intermute.db`."
+},
+{
+"id": "doc-init-keys-file-flag",
+"severity": "medium",
+"section": "Commands",
+"type": "add",
+"suggestion": "Add the following markdown immediately after the new “Server CLI flags” section (or near the existing auth/key docs) to document `init --keys-file`:\n\n``md\n### Keys file path\n\n`intermute init` accepts `--keys-file` to write keys to a specific location.\n\n``bash\ngo run ./cmd/intermute init --project autarch --keys-file ./intermute.keys.yaml\n`\n`\n",
+"evidence": "`cmd/intermute/main.go` registers `--keys-file` on the `init` command (`cmd.Flags().StringVar(&keysFile, \"keys-file\", ...)`) and uses `auth.ResolveKeysPath()` when `--keys-file` is not set. `README.md` documents key resolution order via `INTERMUTE_KEYS_FILE` and `./intermute.keys.yaml`."
+},
+{
+"id": "auth-project-requirements-clarify",
+"severity": "high",
+"section": "Architecture → Authentication",
+"type": "correct",
+"suggestion": "In the **Authentication:** bullet list, replace this bullet:\n\n`- API key requests: require `Authorization: Bearer <key>`+`project` param`\n\nwith the following exact text (to match current behavior described elsewhere):\n\n`- Non-localhost requests: require `Authorization: Bearer <key>`.`\n`- When a bearer key is used, `project`is required on:`POST /api/agents`and`POST /api/messages`.`\n\nAlso change:\n\n`- Keyring loaded from intermute.keys.yaml; maps key → project`\n\nto:\n\n`- Keyring loaded from `INTERMUTE_KEYS_FILE`(fallback`./intermute.keys.yaml`); maps key → project`",
+"evidence": "`README.md` states: (1) “Non-localhost requests require `Authorization: Bearer <key>`.” and (2) “When a bearer key is used, `project` is required on: `POST /api/agents` and `POST /api/messages`.” It also documents key loading order: `INTERMUTE_KEYS_FILE` then `./intermute.keys.yaml`. `cmd/intermute/main.go` prints usage instructions for bearer auth from `init`."
+},
+{
+"id": "add-client-env-vars",
+"severity": "medium",
+"section": "Authentication Model",
+"type": "add",
+"suggestion": "Add this section right after **Authentication Model** (or near it), since agents/SDKs need these env vars:\n\n``md\n## Client Environment\n\n- `INTERMUTE_URL` (client-side) e.g. `http://localhost:7338`\n- `INTERMUTE_API_KEY` (optional; required for non-localhost)\n- `INTERMUTE_PROJECT` (required when `INTERMUTE_API_KEY` is set)\n- `INTERMUTE_AGENT_NAME` (optional override)\n``\n",
+"evidence": "`README.md` contains a “Client Environment” section listing these exact variables and their meanings."
+},
+{
+"id": "stack-toolchain-version",
+"severity": "medium",
+"section": "Architecture",
+"type": "correct",
+"suggestion": "Update the Stack line:\n\n`**Stack:** Go 1.24, SQLite (modernc.org), nhooyr WebSocket`\n\nto:\n\n`**Stack:** Go 1.24 (toolchain `go1.24.12`), SQLite (modernc.org/sqlite), nhooyr WebSocket`",
+"evidence": "`go.mod` specifies `go 1.24` and includes `toolchain go1.24.12`, and depends on `modernc.org/sqlite` and `nhooyr.io/websocket`."
+},
+{
+"id": "overview-domain-entities-complete",
+"severity": "low",
+"section": "Overview",
+"type": "correct",
+"suggestion": "In the Overview paragraph, expand the domain entity list from:\n\n`(specs, epics, stories, tasks)`\n\nto:\n\n`(specs, epics, stories, tasks, insights, sessions)`",
+"evidence": "`cmd/intermute/main.go` (`serveCmd` long description) explicitly lists Domain APIs including “specs, epics, stories, tasks, insights, sessions”."
+}
+],
+"summary": "AGENTS.md is generally detailed, but it has a critical usability issue: the documented “start” commands omit the required `serve` subcommand. Tightening CLI/auth details (subcommands, flags, project requirements, toolchain) would make the doc much more reliable for AI coding agents running and testing the project."
+}
