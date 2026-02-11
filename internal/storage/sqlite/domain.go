@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -228,14 +229,16 @@ func (s *Store) CreateStory(story core.Story) (core.Story, error) {
 	}
 	story.Version = 1
 
-	acJSON, _ := json.Marshal(story.AcceptanceCriteria)
-	_, err := s.db.Exec(
+	acJSON, err := json.Marshal(story.AcceptanceCriteria)
+	if err != nil {
+		return core.Story{}, fmt.Errorf("marshal acceptance_criteria: %w", err)
+	}
+	if _, err := s.db.Exec(
 		`INSERT INTO stories (id, project, epic_id, title, acceptance_criteria_json, status, version, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		story.ID, story.Project, story.EpicID, story.Title, string(acJSON),
 		string(story.Status), story.Version, story.CreatedAt.Format(time.RFC3339Nano), story.UpdatedAt.Format(time.RFC3339Nano),
-	)
-	if err != nil {
+	); err != nil {
 		return core.Story{}, fmt.Errorf("create story: %w", err)
 	}
 	return story, nil
@@ -287,7 +290,10 @@ func (s *Store) UpdateStory(story core.Story) (core.Story, error) {
 	story.UpdatedAt = time.Now().UTC()
 	expectedVersion := story.Version
 	story.Version++
-	acJSON, _ := json.Marshal(story.AcceptanceCriteria)
+	acJSON, err := json.Marshal(story.AcceptanceCriteria)
+	if err != nil {
+		return core.Story{}, fmt.Errorf("marshal acceptance_criteria: %w", err)
+	}
 	res, err := s.db.Exec(
 		`UPDATE stories SET epic_id = ?, title = ?, acceptance_criteria_json = ?, status = ?, version = ?, updated_at = ?
 		 WHERE project = ? AND id = ? AND version = ?`,
@@ -648,7 +654,9 @@ func scanStory(row scanner) (core.Story, error) {
 		return core.Story{}, fmt.Errorf("scan story: %w", err)
 	}
 	if acJSON.Valid {
-		_ = json.Unmarshal([]byte(acJSON.String), &s.AcceptanceCriteria)
+		if err := json.Unmarshal([]byte(acJSON.String), &s.AcceptanceCriteria); err != nil {
+			log.Printf("WARN: corrupt acceptance_criteria_json for story %s: %v", s.ID, err)
+		}
 	}
 	s.Status = core.StoryStatus(status)
 	s.Version = version
@@ -745,19 +753,27 @@ func (s *Store) CreateCUJ(cuj core.CriticalUserJourney) (core.CriticalUserJourne
 		cuj.Version = 1
 	}
 
-	stepsJSON, _ := json.Marshal(cuj.Steps)
-	successJSON, _ := json.Marshal(cuj.SuccessCriteria)
-	errorJSON, _ := json.Marshal(cuj.ErrorRecovery)
+	stepsJSON, err := json.Marshal(cuj.Steps)
+	if err != nil {
+		return core.CriticalUserJourney{}, fmt.Errorf("marshal steps: %w", err)
+	}
+	successJSON, err := json.Marshal(cuj.SuccessCriteria)
+	if err != nil {
+		return core.CriticalUserJourney{}, fmt.Errorf("marshal success_criteria: %w", err)
+	}
+	errorJSON, err := json.Marshal(cuj.ErrorRecovery)
+	if err != nil {
+		return core.CriticalUserJourney{}, fmt.Errorf("marshal error_recovery: %w", err)
+	}
 
-	_, err := s.db.Exec(
+	if _, err := s.db.Exec(
 		`INSERT INTO cujs (id, project, spec_id, title, persona, priority, entry_point, exit_point,
 		 steps_json, success_criteria_json, error_recovery_json, status, version, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		cuj.ID, cuj.Project, cuj.SpecID, cuj.Title, cuj.Persona, string(cuj.Priority),
 		cuj.EntryPoint, cuj.ExitPoint, string(stepsJSON), string(successJSON), string(errorJSON),
 		string(cuj.Status), cuj.Version, cuj.CreatedAt.Format(time.RFC3339Nano), cuj.UpdatedAt.Format(time.RFC3339Nano),
-	)
-	if err != nil {
+	); err != nil {
 		return core.CriticalUserJourney{}, fmt.Errorf("create cuj: %w", err)
 	}
 	return cuj, nil
@@ -813,9 +829,18 @@ func (s *Store) UpdateCUJ(cuj core.CriticalUserJourney) (core.CriticalUserJourne
 	expectedVersion := cuj.Version
 	cuj.Version++
 
-	stepsJSON, _ := json.Marshal(cuj.Steps)
-	successJSON, _ := json.Marshal(cuj.SuccessCriteria)
-	errorJSON, _ := json.Marshal(cuj.ErrorRecovery)
+	stepsJSON, err := json.Marshal(cuj.Steps)
+	if err != nil {
+		return core.CriticalUserJourney{}, fmt.Errorf("marshal steps: %w", err)
+	}
+	successJSON, err := json.Marshal(cuj.SuccessCriteria)
+	if err != nil {
+		return core.CriticalUserJourney{}, fmt.Errorf("marshal success_criteria: %w", err)
+	}
+	errorJSON, err := json.Marshal(cuj.ErrorRecovery)
+	if err != nil {
+		return core.CriticalUserJourney{}, fmt.Errorf("marshal error_recovery: %w", err)
+	}
 
 	res, err := s.db.Exec(
 		`UPDATE cujs SET spec_id = ?, title = ?, persona = ?, priority = ?, entry_point = ?, exit_point = ?,
@@ -929,13 +954,19 @@ func scanCUJ(row scanner) (core.CriticalUserJourney, error) {
 	c.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
 
 	if stepsJSON.Valid {
-		_ = json.Unmarshal([]byte(stepsJSON.String), &c.Steps)
+		if err := json.Unmarshal([]byte(stepsJSON.String), &c.Steps); err != nil {
+			log.Printf("WARN: corrupt steps_json for CUJ %s: %v", c.ID, err)
+		}
 	}
 	if successJSON.Valid {
-		_ = json.Unmarshal([]byte(successJSON.String), &c.SuccessCriteria)
+		if err := json.Unmarshal([]byte(successJSON.String), &c.SuccessCriteria); err != nil {
+			log.Printf("WARN: corrupt success_criteria_json for CUJ %s: %v", c.ID, err)
+		}
 	}
 	if errorJSON.Valid {
-		_ = json.Unmarshal([]byte(errorJSON.String), &c.ErrorRecovery)
+		if err := json.Unmarshal([]byte(errorJSON.String), &c.ErrorRecovery); err != nil {
+			log.Printf("WARN: corrupt error_recovery_json for CUJ %s: %v", c.ID, err)
+		}
 	}
 
 	return c, nil

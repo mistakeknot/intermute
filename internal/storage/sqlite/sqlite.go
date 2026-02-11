@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -92,9 +93,18 @@ func (s *Store) AppendEvent(ev core.Event) (uint64, error) {
 	}
 	ev.Message.Project = project
 
-	toJSON, _ := json.Marshal(ev.Message.To)
+	toJSON, err := json.Marshal(ev.Message.To)
+	if err != nil {
+		return 0, fmt.Errorf("marshal recipients: %w", err)
+	}
 
-	res, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("begin append event: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(
 		`INSERT INTO events (id, type, agent, project, message_id, thread_id, from_agent, to_json, body, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ev.ID, string(ev.Type), ev.Agent, project, ev.Message.ID, ev.Message.ThreadID, ev.Message.From, string(toJSON), ev.Message.Body, ev.CreatedAt.Format(time.RFC3339Nano),
@@ -108,7 +118,7 @@ func (s *Store) AppendEvent(ev core.Event) (uint64, error) {
 	}
 
 	if ev.Type == core.EventMessageCreated {
-		if err := s.upsertMessage(project, ev.Message); err != nil {
+		if err := s.upsertMessageTx(tx, project, ev.Message); err != nil {
 			return 0, err
 		}
 		recipients := ev.Message.To
@@ -116,7 +126,7 @@ func (s *Store) AppendEvent(ev core.Event) (uint64, error) {
 			recipients = []string{ev.Agent}
 		}
 		for _, agent := range recipients {
-			if _, err := s.db.Exec(
+			if _, err := tx.Exec(
 				`INSERT INTO inbox_index (project, agent, cursor, message_id) VALUES (?, ?, ?, ?)`,
 				project, agent, cursor, ev.Message.ID,
 			); err != nil {
@@ -124,20 +134,20 @@ func (s *Store) AppendEvent(ev core.Event) (uint64, error) {
 			}
 		}
 		// Insert into message_recipients for per-recipient tracking
-		if err := s.insertRecipients(project, ev.Message.ID, ev.Message.To, "to"); err != nil {
+		if err := s.insertRecipientsTx(tx, project, ev.Message.ID, ev.Message.To, "to"); err != nil {
 			return 0, err
 		}
-		if err := s.insertRecipients(project, ev.Message.ID, ev.Message.CC, "cc"); err != nil {
+		if err := s.insertRecipientsTx(tx, project, ev.Message.ID, ev.Message.CC, "cc"); err != nil {
 			return 0, err
 		}
-		if err := s.insertRecipients(project, ev.Message.ID, ev.Message.BCC, "bcc"); err != nil {
+		if err := s.insertRecipientsTx(tx, project, ev.Message.ID, ev.Message.BCC, "bcc"); err != nil {
 			return 0, err
 		}
 		// Update thread_index if message has a thread ID
 		if ev.Message.ThreadID != "" {
 			participants := append([]string{ev.Message.From}, recipients...)
 			for _, agent := range participants {
-				if _, err := s.db.Exec(
+				if _, err := tx.Exec(
 					`INSERT INTO thread_index (project, thread_id, agent, last_cursor, message_count)
 					 VALUES (?, ?, ?, ?, 1)
 					 ON CONFLICT(project, thread_id, agent) DO UPDATE SET
@@ -151,30 +161,41 @@ func (s *Store) AppendEvent(ev core.Event) (uint64, error) {
 		}
 	}
 
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit append event: %w", err)
+	}
 	return uint64(cursor), nil
 }
 
-func (s *Store) upsertMessage(project string, msg core.Message) error {
+func (s *Store) upsertMessageTx(tx *sql.Tx, project string, msg core.Message) error {
 	if project == "" {
 		project = msg.Project
 	}
 	if msg.CreatedAt.IsZero() {
 		msg.CreatedAt = time.Now().UTC()
 	}
-	toJSON, _ := json.Marshal(msg.To)
-	ccJSON, _ := json.Marshal(msg.CC)
-	bccJSON, _ := json.Marshal(msg.BCC)
+	toJSON, err := json.Marshal(msg.To)
+	if err != nil {
+		return fmt.Errorf("marshal to: %w", err)
+	}
+	ccJSON, err := json.Marshal(msg.CC)
+	if err != nil {
+		return fmt.Errorf("marshal cc: %w", err)
+	}
+	bccJSON, err := json.Marshal(msg.BCC)
+	if err != nil {
+		return fmt.Errorf("marshal bcc: %w", err)
+	}
 	ackRequired := 0
 	if msg.AckRequired {
 		ackRequired = 1
 	}
-	_, err := s.db.Exec(
+	if _, err := tx.Exec(
 		`INSERT INTO messages (project, message_id, thread_id, from_agent, to_json, cc_json, bcc_json, subject, body, importance, ack_required, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(project, message_id) DO UPDATE SET thread_id=excluded.thread_id, from_agent=excluded.from_agent, to_json=excluded.to_json, cc_json=excluded.cc_json, bcc_json=excluded.bcc_json, subject=excluded.subject, body=excluded.body, importance=excluded.importance, ack_required=excluded.ack_required`,
 		project, msg.ID, msg.ThreadID, msg.From, string(toJSON), string(ccJSON), string(bccJSON), msg.Subject, msg.Body, msg.Importance, ackRequired, msg.CreatedAt.Format(time.RFC3339Nano),
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("upsert message: %w", err)
 	}
 	return nil
@@ -212,9 +233,15 @@ func (s *Store) InboxSince(project, agent string, cursor uint64) ([]core.Message
 			return nil, fmt.Errorf("scan inbox: %w", err)
 		}
 		var to, cc, bcc []string
-		_ = json.Unmarshal([]byte(toJSON), &to)
-		_ = json.Unmarshal([]byte(ccJSON), &cc)
-		_ = json.Unmarshal([]byte(bccJSON), &bcc)
+		if err := json.Unmarshal([]byte(toJSON), &to); err != nil {
+			log.Printf("WARN: corrupt to_json for message %s: %v", msgID, err)
+		}
+		if err := json.Unmarshal([]byte(ccJSON), &cc); err != nil {
+			log.Printf("WARN: corrupt cc_json for message %s: %v", msgID, err)
+		}
+		if err := json.Unmarshal([]byte(bccJSON), &bcc); err != nil {
+			log.Printf("WARN: corrupt bcc_json for message %s: %v", msgID, err)
+		}
 		parsed, _ := time.Parse(time.RFC3339Nano, createdAt)
 		out = append(out, core.Message{
 			ID:          msgID,
@@ -266,9 +293,15 @@ func (s *Store) ThreadMessages(project, threadID string, cursor uint64) ([]core.
 			return nil, fmt.Errorf("scan thread: %w", err)
 		}
 		var to, cc, bcc []string
-		_ = json.Unmarshal([]byte(toJSON), &to)
-		_ = json.Unmarshal([]byte(ccJSON), &cc)
-		_ = json.Unmarshal([]byte(bccJSON), &bcc)
+		if err := json.Unmarshal([]byte(toJSON), &to); err != nil {
+			log.Printf("WARN: corrupt to_json for message %s: %v", msgID, err)
+		}
+		if err := json.Unmarshal([]byte(ccJSON), &cc); err != nil {
+			log.Printf("WARN: corrupt cc_json for message %s: %v", msgID, err)
+		}
+		if err := json.Unmarshal([]byte(bccJSON), &bcc); err != nil {
+			log.Printf("WARN: corrupt bcc_json for message %s: %v", msgID, err)
+		}
 		parsed, _ := time.Parse(time.RFC3339Nano, createdAt)
 		out = append(out, core.Message{
 			ID:          msgID,
@@ -545,18 +578,23 @@ func (s *Store) RegisterAgent(agent core.Agent) (core.Agent, error) {
 		agent.LastSeen = now
 	}
 
-	capsJSON, _ := json.Marshal(agent.Capabilities)
-	metaJSON, _ := json.Marshal(agent.Metadata)
+	capsJSON, err := json.Marshal(agent.Capabilities)
+	if err != nil {
+		return core.Agent{}, fmt.Errorf("marshal capabilities: %w", err)
+	}
+	metaJSON, err := json.Marshal(agent.Metadata)
+	if err != nil {
+		return core.Agent{}, fmt.Errorf("marshal metadata: %w", err)
+	}
 
-	_, err := s.db.Exec(
+	if _, err := s.db.Exec(
 		`INSERT INTO agents (id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, name=excluded.name, project=excluded.project,
 		 capabilities_json=excluded.capabilities_json, metadata_json=excluded.metadata_json, status=excluded.status, last_seen=excluded.last_seen`,
 		agent.ID, agent.SessionID, agent.Name, agent.Project, string(capsJSON), string(metaJSON), agent.Status,
 		agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
-	)
-	if err != nil {
+	); err != nil {
 		return core.Agent{}, fmt.Errorf("register agent: %w", err)
 	}
 	return agent, nil
@@ -590,9 +628,13 @@ func (s *Store) Heartbeat(project, agentID string) (core.Agent, error) {
 		return core.Agent{}, fmt.Errorf("heartbeat fetch: %w", err)
 	}
 	var caps []string
-	_ = json.Unmarshal([]byte(capsJSON), &caps)
+	if err := json.Unmarshal([]byte(capsJSON), &caps); err != nil {
+		log.Printf("WARN: corrupt capabilities_json for agent %s: %v", agentID, err)
+	}
 	meta := map[string]string{}
-	_ = json.Unmarshal([]byte(metaJSON), &meta)
+	if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
+		log.Printf("WARN: corrupt metadata_json for agent %s: %v", agentID, err)
+	}
 	createdAtTime, _ := time.Parse(time.RFC3339Nano, createdAt)
 	lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
 
@@ -634,9 +676,13 @@ func (s *Store) ListAgents(project string) ([]core.Agent, error) {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		var caps []string
-		_ = json.Unmarshal([]byte(capsJSON), &caps)
+		if err := json.Unmarshal([]byte(capsJSON), &caps); err != nil {
+			log.Printf("WARN: corrupt capabilities_json for agent %s: %v", id, err)
+		}
 		meta := map[string]string{}
-		_ = json.Unmarshal([]byte(metaJSON), &meta)
+		if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
+			log.Printf("WARN: corrupt metadata_json for agent %s: %v", id, err)
+		}
 		createdAtTime, _ := time.Parse(time.RFC3339Nano, createdAt)
 		lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
 
@@ -688,10 +734,10 @@ func migrateMessagesMetadata(db *sql.DB) error {
 	return nil
 }
 
-// insertRecipients adds recipients to the message_recipients table
-func (s *Store) insertRecipients(project, messageID string, agents []string, kind string) error {
+// insertRecipientsTx adds recipients to the message_recipients table within a transaction
+func (s *Store) insertRecipientsTx(tx *sql.Tx, project, messageID string, agents []string, kind string) error {
 	for _, agent := range agents {
-		if _, err := s.db.Exec(
+		if _, err := tx.Exec(
 			`INSERT INTO message_recipients (project, message_id, agent_id, kind)
 			 VALUES (?, ?, ?, ?)
 			 ON CONFLICT(project, message_id, agent_id) DO NOTHING`,

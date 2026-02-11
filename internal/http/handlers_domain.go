@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -131,6 +132,10 @@ func (s *DomainService) updateSpec(w http.ResponseWriter, r *http.Request, id st
 	}
 	updated, err := s.domainStore.UpdateSpec(spec)
 	if err != nil {
+		if errors.Is(err, core.ErrConcurrentModification) {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -256,6 +261,10 @@ func (s *DomainService) updateEpic(w http.ResponseWriter, r *http.Request, id st
 	}
 	updated, err := s.domainStore.UpdateEpic(epic)
 	if err != nil {
+		if errors.Is(err, core.ErrConcurrentModification) {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -380,6 +389,10 @@ func (s *DomainService) updateStory(w http.ResponseWriter, r *http.Request, id s
 	}
 	updated, err := s.domainStore.UpdateStory(story)
 	if err != nil {
+		if errors.Is(err, core.ErrConcurrentModification) {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -511,6 +524,10 @@ func (s *DomainService) updateTask(w http.ResponseWriter, r *http.Request, id st
 	}
 	updated, err := s.domainStore.UpdateTask(task)
 	if err != nil {
+		if errors.Is(err, core.ErrConcurrentModification) {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -547,6 +564,10 @@ func (s *DomainService) assignTask(w http.ResponseWriter, r *http.Request, id st
 	task.Status = core.TaskStatusRunning
 	updated, err := s.domainStore.UpdateTask(task)
 	if err != nil {
+		if errors.Is(err, core.ErrConcurrentModification) {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -963,6 +984,10 @@ func (s *DomainService) updateCUJ(w http.ResponseWriter, r *http.Request, id str
 
 	updated, err := s.domainStore.UpdateCUJ(cuj)
 	if err != nil {
+		if errors.Is(err, core.ErrConcurrentModification) {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

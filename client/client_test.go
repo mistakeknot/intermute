@@ -9,13 +9,18 @@ import (
 	"time"
 )
 
-func TestClientSendAndInbox(t *testing.T) {
-	c := New("http://localhost:7338")
+func TestClientSendFailsWithoutServer(t *testing.T) {
+	// Start a server and immediately close it to get a guaranteed-unused port
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := srv.URL
+	srv.Close()
+
+	c := New(deadURL)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_, err := c.SendMessage(ctx, Message{From: "a", To: []string{"b"}, Body: "hi"})
 	if err == nil {
-		t.Fatalf("expected failure without server")
+		t.Fatal("expected error when server unreachable")
 	}
 }
 
