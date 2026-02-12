@@ -64,7 +64,7 @@ func (s *Service) handleListThreads(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
-	threads, err := s.store.ListThreads(project, agent, cursor, limit)
+	threads, err := s.store.ListThreads(r.Context(), project, agent, cursor, limit)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -117,7 +117,7 @@ func (s *Service) handleThreadMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	msgs, err := s.store.ThreadMessages(project, threadID, cursor)
+	msgs, err := s.store.ThreadMessages(r.Context(), project, threadID, cursor)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

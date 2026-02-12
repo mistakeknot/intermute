@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -58,11 +59,11 @@ func toAPIReservation(r core.Reservation) apiReservation {
 
 // ReservationStore is the subset of Store methods needed for reservation handlers
 type ReservationStore interface {
-	Reserve(r core.Reservation) (*core.Reservation, error)
-	GetReservation(id string) (*core.Reservation, error)
-	ReleaseReservation(id, agentID string) error
-	ActiveReservations(project string) ([]core.Reservation, error)
-	AgentReservations(agentID string) ([]core.Reservation, error)
+	Reserve(ctx context.Context, r core.Reservation) (*core.Reservation, error)
+	GetReservation(ctx context.Context, id string) (*core.Reservation, error)
+	ReleaseReservation(ctx context.Context, id, agentID string) error
+	ActiveReservations(ctx context.Context, project string) ([]core.Reservation, error)
+	AgentReservations(ctx context.Context, agentID string) ([]core.Reservation, error)
 }
 
 func (s *Service) handleReservations(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +118,7 @@ func (s *Service) createReservation(w http.ResponseWriter, r *http.Request) {
 		ttl = time.Duration(req.TTLMinutes) * time.Minute
 	}
 
-	res, err := s.store.Reserve(core.Reservation{
+	res, err := s.store.Reserve(r.Context(), core.Reservation{
 		AgentID:     req.AgentID,
 		Project:     project,
 		PathPattern: req.PathPattern,
@@ -146,9 +147,9 @@ func (s *Service) listReservations(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if agentID != "" {
-		reservations, err = s.store.AgentReservations(agentID)
+		reservations, err = s.store.AgentReservations(r.Context(), agentID)
 	} else if project != "" {
-		reservations, err = s.store.ActiveReservations(project)
+		reservations, err = s.store.ActiveReservations(r.Context(), project)
 	} else {
 		w.WriteHeader(http.StatusBadRequest)
 		return
@@ -169,7 +170,7 @@ func (s *Service) listReservations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) releaseReservation(w http.ResponseWriter, r *http.Request, id string) {
-	reservation, err := s.store.GetReservation(id)
+	reservation, err := s.store.GetReservation(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, core.ErrNotFound) {
 			w.WriteHeader(http.StatusNotFound)
@@ -183,7 +184,7 @@ func (s *Service) releaseReservation(w http.ResponseWriter, r *http.Request, id 
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	if err := s.store.ReleaseReservation(id, info.AgentID); err != nil {
+	if err := s.store.ReleaseReservation(r.Context(), id, info.AgentID); err != nil {
 		if errors.Is(err, core.ErrNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 		} else {

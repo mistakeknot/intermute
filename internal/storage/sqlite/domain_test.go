@@ -1,12 +1,14 @@
 package sqlite
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mistakeknot/intermute/internal/core"
 )
 
 func TestSpecCRUD(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -19,7 +21,7 @@ func TestSpecCRUD(t *testing.T) {
 		Vision:  "A great vision",
 		Status:  core.SpecStatusDraft,
 	}
-	created, err := store.CreateSpec(spec)
+	created, err := store.CreateSpec(ctx, spec)
 	if err != nil {
 		t.Fatalf("CreateSpec: %v", err)
 	}
@@ -31,7 +33,7 @@ func TestSpecCRUD(t *testing.T) {
 	}
 
 	// Get
-	fetched, err := store.GetSpec("test-project", created.ID)
+	fetched, err := store.GetSpec(ctx, "test-project", created.ID)
 	if err != nil {
 		t.Fatalf("GetSpec: %v", err)
 	}
@@ -40,7 +42,7 @@ func TestSpecCRUD(t *testing.T) {
 	}
 
 	// List
-	specs, err := store.ListSpecs("test-project", "")
+	specs, err := store.ListSpecs(ctx, "test-project", "")
 	if err != nil {
 		t.Fatalf("ListSpecs: %v", err)
 	}
@@ -49,14 +51,14 @@ func TestSpecCRUD(t *testing.T) {
 	}
 
 	// List with status filter
-	specs, err = store.ListSpecs("test-project", "draft")
+	specs, err = store.ListSpecs(ctx, "test-project", "draft")
 	if err != nil {
 		t.Fatalf("ListSpecs with status: %v", err)
 	}
 	if len(specs) != 1 {
 		t.Errorf("len(specs) = %d, want 1", len(specs))
 	}
-	specs, err = store.ListSpecs("test-project", "validated")
+	specs, err = store.ListSpecs(ctx, "test-project", "validated")
 	if err != nil {
 		t.Fatalf("ListSpecs with status: %v", err)
 	}
@@ -67,7 +69,7 @@ func TestSpecCRUD(t *testing.T) {
 	// Update
 	fetched.Vision = "Updated vision"
 	fetched.Status = core.SpecStatusValidated
-	updated, err := store.UpdateSpec(fetched)
+	updated, err := store.UpdateSpec(ctx, fetched)
 	if err != nil {
 		t.Fatalf("UpdateSpec: %v", err)
 	}
@@ -76,10 +78,10 @@ func TestSpecCRUD(t *testing.T) {
 	}
 
 	// Delete
-	if err := store.DeleteSpec("test-project", created.ID); err != nil {
+	if err := store.DeleteSpec(ctx, "test-project", created.ID); err != nil {
 		t.Fatalf("DeleteSpec: %v", err)
 	}
-	specs, err = store.ListSpecs("test-project", "")
+	specs, err = store.ListSpecs(ctx, "test-project", "")
 	if err != nil {
 		t.Fatalf("ListSpecs after delete: %v", err)
 	}
@@ -89,13 +91,14 @@ func TestSpecCRUD(t *testing.T) {
 }
 
 func TestEpicCRUD(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Create spec first
-	spec, _ := store.CreateSpec(core.Spec{
+	spec, _ := store.CreateSpec(ctx, core.Spec{
 		Project: "test-project",
 		Title:   "Parent Spec",
 	})
@@ -108,7 +111,7 @@ func TestEpicCRUD(t *testing.T) {
 		Description: "Epic description",
 		Status:      core.EpicStatusOpen,
 	}
-	created, err := store.CreateEpic(epic)
+	created, err := store.CreateEpic(ctx, epic)
 	if err != nil {
 		t.Fatalf("CreateEpic: %v", err)
 	}
@@ -117,7 +120,7 @@ func TestEpicCRUD(t *testing.T) {
 	}
 
 	// List by spec
-	epics, err := store.ListEpics("test-project", spec.ID)
+	epics, err := store.ListEpics(ctx, "test-project", spec.ID)
 	if err != nil {
 		t.Fatalf("ListEpics: %v", err)
 	}
@@ -127,7 +130,7 @@ func TestEpicCRUD(t *testing.T) {
 
 	// Update
 	created.Status = core.EpicStatusInProgress
-	updated, err := store.UpdateEpic(created)
+	updated, err := store.UpdateEpic(ctx, created)
 	if err != nil {
 		t.Fatalf("UpdateEpic: %v", err)
 	}
@@ -137,13 +140,14 @@ func TestEpicCRUD(t *testing.T) {
 }
 
 func TestStoryCRUD(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Create epic first
-	epic, _ := store.CreateEpic(core.Epic{
+	epic, _ := store.CreateEpic(ctx, core.Epic{
 		Project: "test-project",
 		Title:   "Parent Epic",
 	})
@@ -156,7 +160,7 @@ func TestStoryCRUD(t *testing.T) {
 		AcceptanceCriteria: []string{"AC1", "AC2"},
 		Status:             core.StoryStatusTodo,
 	}
-	created, err := store.CreateStory(story)
+	created, err := store.CreateStory(ctx, story)
 	if err != nil {
 		t.Fatalf("CreateStory: %v", err)
 	}
@@ -165,7 +169,7 @@ func TestStoryCRUD(t *testing.T) {
 	}
 
 	// Get and verify acceptance criteria persisted
-	fetched, err := store.GetStory("test-project", created.ID)
+	fetched, err := store.GetStory(ctx, "test-project", created.ID)
 	if err != nil {
 		t.Fatalf("GetStory: %v", err)
 	}
@@ -175,6 +179,7 @@ func TestStoryCRUD(t *testing.T) {
 }
 
 func TestTaskCRUD(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +191,7 @@ func TestTaskCRUD(t *testing.T) {
 		Title:   "Test Task",
 		Status:  core.TaskStatusPending,
 	}
-	created, err := store.CreateTask(task)
+	created, err := store.CreateTask(ctx, task)
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -194,7 +199,7 @@ func TestTaskCRUD(t *testing.T) {
 	// Assign
 	created.Agent = "claude"
 	created.Status = core.TaskStatusRunning
-	updated, err := store.UpdateTask(created)
+	updated, err := store.UpdateTask(ctx, created)
 	if err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
@@ -203,7 +208,7 @@ func TestTaskCRUD(t *testing.T) {
 	}
 
 	// List by status
-	tasks, err := store.ListTasks("test-project", "running", "")
+	tasks, err := store.ListTasks(ctx, "test-project", "running", "")
 	if err != nil {
 		t.Fatalf("ListTasks: %v", err)
 	}
@@ -212,7 +217,7 @@ func TestTaskCRUD(t *testing.T) {
 	}
 
 	// List by agent
-	tasks, err = store.ListTasks("test-project", "", "claude")
+	tasks, err = store.ListTasks(ctx, "test-project", "", "claude")
 	if err != nil {
 		t.Fatalf("ListTasks by agent: %v", err)
 	}
@@ -222,6 +227,7 @@ func TestTaskCRUD(t *testing.T) {
 }
 
 func TestInsightCRUD(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -235,22 +241,22 @@ func TestInsightCRUD(t *testing.T) {
 		Title:    "Test Insight",
 		Score:    0.85,
 	}
-	created, err := store.CreateInsight(insight)
+	created, err := store.CreateInsight(ctx, insight)
 	if err != nil {
 		t.Fatalf("CreateInsight: %v", err)
 	}
 
 	// Link to spec
-	spec, _ := store.CreateSpec(core.Spec{
+	spec, _ := store.CreateSpec(ctx, core.Spec{
 		Project: "test-project",
 		Title:   "Test Spec",
 	})
-	if err := store.LinkInsightToSpec("test-project", created.ID, spec.ID); err != nil {
+	if err := store.LinkInsightToSpec(ctx, "test-project", created.ID, spec.ID); err != nil {
 		t.Fatalf("LinkInsightToSpec: %v", err)
 	}
 
 	// List by spec
-	insights, err := store.ListInsights("test-project", spec.ID, "")
+	insights, err := store.ListInsights(ctx, "test-project", spec.ID, "")
 	if err != nil {
 		t.Fatalf("ListInsights: %v", err)
 	}
@@ -259,7 +265,7 @@ func TestInsightCRUD(t *testing.T) {
 	}
 
 	// List by category
-	insights, err = store.ListInsights("test-project", "", "competitor")
+	insights, err = store.ListInsights(ctx, "test-project", "", "competitor")
 	if err != nil {
 		t.Fatalf("ListInsights by category: %v", err)
 	}
@@ -269,6 +275,7 @@ func TestInsightCRUD(t *testing.T) {
 }
 
 func TestSessionCRUD(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +288,7 @@ func TestSessionCRUD(t *testing.T) {
 		Agent:   "claude",
 		Status:  core.SessionStatusRunning,
 	}
-	created, err := store.CreateSession(session)
+	created, err := store.CreateSession(ctx, session)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
@@ -290,7 +297,7 @@ func TestSessionCRUD(t *testing.T) {
 	}
 
 	// List by status
-	sessions, err := store.ListSessions("test-project", "running")
+	sessions, err := store.ListSessions(ctx, "test-project", "running")
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
@@ -300,7 +307,7 @@ func TestSessionCRUD(t *testing.T) {
 
 	// Update status
 	created.Status = core.SessionStatusIdle
-	updated, err := store.UpdateSession(created)
+	updated, err := store.UpdateSession(ctx, created)
 	if err != nil {
 		t.Fatalf("UpdateSession: %v", err)
 	}
@@ -309,7 +316,7 @@ func TestSessionCRUD(t *testing.T) {
 	}
 
 	// Delete
-	if err := store.DeleteSession("test-project", created.ID); err != nil {
+	if err := store.DeleteSession(ctx, "test-project", created.ID); err != nil {
 		t.Fatalf("DeleteSession: %v", err)
 	}
 }
@@ -317,6 +324,7 @@ func TestSessionCRUD(t *testing.T) {
 // Optimistic locking tests
 
 func TestSpecOptimisticLocking(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -327,7 +335,7 @@ func TestSpecOptimisticLocking(t *testing.T) {
 		Project: "test-project",
 		Title:   "Test Spec",
 	}
-	created, err := store.CreateSpec(spec)
+	created, err := store.CreateSpec(ctx, spec)
 	if err != nil {
 		t.Fatalf("CreateSpec: %v", err)
 	}
@@ -337,7 +345,7 @@ func TestSpecOptimisticLocking(t *testing.T) {
 
 	// First update should succeed
 	created.Title = "Updated Title"
-	updated, err := store.UpdateSpec(created)
+	updated, err := store.UpdateSpec(ctx, created)
 	if err != nil {
 		t.Fatalf("UpdateSpec: %v", err)
 	}
@@ -347,14 +355,14 @@ func TestSpecOptimisticLocking(t *testing.T) {
 
 	// Second update with stale version should fail
 	created.Title = "Stale Update"
-	_, err = store.UpdateSpec(created) // created still has version=1
+	_, err = store.UpdateSpec(ctx, created) // created still has version=1
 	if err != core.ErrConcurrentModification {
 		t.Errorf("expected ErrConcurrentModification, got %v", err)
 	}
 
 	// Update with correct version should succeed
 	updated.Title = "Final Title"
-	final, err := store.UpdateSpec(updated)
+	final, err := store.UpdateSpec(ctx, updated)
 	if err != nil {
 		t.Fatalf("UpdateSpec with correct version: %v", err)
 	}
@@ -364,6 +372,7 @@ func TestSpecOptimisticLocking(t *testing.T) {
 }
 
 func TestEpicOptimisticLocking(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -373,7 +382,7 @@ func TestEpicOptimisticLocking(t *testing.T) {
 		Project: "test-project",
 		Title:   "Test Epic",
 	}
-	created, err := store.CreateEpic(epic)
+	created, err := store.CreateEpic(ctx, epic)
 	if err != nil {
 		t.Fatalf("CreateEpic: %v", err)
 	}
@@ -383,7 +392,7 @@ func TestEpicOptimisticLocking(t *testing.T) {
 
 	// Successful update
 	created.Title = "Updated Epic"
-	updated, err := store.UpdateEpic(created)
+	updated, err := store.UpdateEpic(ctx, created)
 	if err != nil {
 		t.Fatalf("UpdateEpic: %v", err)
 	}
@@ -393,19 +402,20 @@ func TestEpicOptimisticLocking(t *testing.T) {
 
 	// Stale update should fail
 	created.Title = "Stale Epic"
-	_, err = store.UpdateEpic(created)
+	_, err = store.UpdateEpic(ctx, created)
 	if err != core.ErrConcurrentModification {
 		t.Errorf("expected ErrConcurrentModification, got %v", err)
 	}
 }
 
 func TestStoryOptimisticLocking(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	epic, _ := store.CreateEpic(core.Epic{
+	epic, _ := store.CreateEpic(ctx, core.Epic{
 		Project: "test-project",
 		Title:   "Parent Epic",
 	})
@@ -415,7 +425,7 @@ func TestStoryOptimisticLocking(t *testing.T) {
 		EpicID:  epic.ID,
 		Title:   "Test Story",
 	}
-	created, err := store.CreateStory(story)
+	created, err := store.CreateStory(ctx, story)
 	if err != nil {
 		t.Fatalf("CreateStory: %v", err)
 	}
@@ -425,7 +435,7 @@ func TestStoryOptimisticLocking(t *testing.T) {
 
 	// Successful update
 	created.Title = "Updated Story"
-	updated, err := store.UpdateStory(created)
+	updated, err := store.UpdateStory(ctx, created)
 	if err != nil {
 		t.Fatalf("UpdateStory: %v", err)
 	}
@@ -435,13 +445,14 @@ func TestStoryOptimisticLocking(t *testing.T) {
 
 	// Stale update should fail
 	created.Title = "Stale Story"
-	_, err = store.UpdateStory(created)
+	_, err = store.UpdateStory(ctx, created)
 	if err != core.ErrConcurrentModification {
 		t.Errorf("expected ErrConcurrentModification, got %v", err)
 	}
 }
 
 func TestTaskOptimisticLocking(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
@@ -451,7 +462,7 @@ func TestTaskOptimisticLocking(t *testing.T) {
 		Project: "test-project",
 		Title:   "Test Task",
 	}
-	created, err := store.CreateTask(task)
+	created, err := store.CreateTask(ctx, task)
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -461,7 +472,7 @@ func TestTaskOptimisticLocking(t *testing.T) {
 
 	// Successful update
 	created.Agent = "claude"
-	updated, err := store.UpdateTask(created)
+	updated, err := store.UpdateTask(ctx, created)
 	if err != nil {
 		t.Fatalf("UpdateTask: %v", err)
 	}
@@ -471,19 +482,20 @@ func TestTaskOptimisticLocking(t *testing.T) {
 
 	// Stale update should fail
 	created.Agent = "codex"
-	_, err = store.UpdateTask(created)
+	_, err = store.UpdateTask(ctx, created)
 	if err != core.ErrConcurrentModification {
 		t.Errorf("expected ErrConcurrentModification, got %v", err)
 	}
 }
 
 func TestCUJOptimisticLocking(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	spec, _ := store.CreateSpec(core.Spec{
+	spec, _ := store.CreateSpec(ctx, core.Spec{
 		Project: "test-project",
 		Title:   "Test Spec",
 	})
@@ -493,7 +505,7 @@ func TestCUJOptimisticLocking(t *testing.T) {
 		SpecID:  spec.ID,
 		Title:   "Test CUJ",
 	}
-	created, err := store.CreateCUJ(cuj)
+	created, err := store.CreateCUJ(ctx, cuj)
 	if err != nil {
 		t.Fatalf("CreateCUJ: %v", err)
 	}
@@ -503,7 +515,7 @@ func TestCUJOptimisticLocking(t *testing.T) {
 
 	// Successful update
 	created.Title = "Updated CUJ"
-	updated, err := store.UpdateCUJ(created)
+	updated, err := store.UpdateCUJ(ctx, created)
 	if err != nil {
 		t.Fatalf("UpdateCUJ: %v", err)
 	}
@@ -513,30 +525,31 @@ func TestCUJOptimisticLocking(t *testing.T) {
 
 	// Stale update should fail
 	created.Title = "Stale CUJ"
-	_, err = store.UpdateCUJ(created)
+	_, err = store.UpdateCUJ(ctx, created)
 	if err != core.ErrConcurrentModification {
 		t.Errorf("expected ErrConcurrentModification, got %v", err)
 	}
 }
 
 func TestVersionPersistedInGet(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Create and update spec
-	spec, _ := store.CreateSpec(core.Spec{
+	spec, _ := store.CreateSpec(ctx, core.Spec{
 		Project: "test-project",
 		Title:   "Test Spec",
 	})
 	spec.Title = "Updated"
-	spec, _ = store.UpdateSpec(spec)
+	spec, _ = store.UpdateSpec(ctx, spec)
 	spec.Title = "Updated Again"
-	spec, _ = store.UpdateSpec(spec)
+	spec, _ = store.UpdateSpec(ctx, spec)
 
 	// Fetch and verify version is persisted
-	fetched, err := store.GetSpec("test-project", spec.ID)
+	fetched, err := store.GetSpec(ctx, "test-project", spec.ID)
 	if err != nil {
 		t.Fatalf("GetSpec: %v", err)
 	}
@@ -546,21 +559,22 @@ func TestVersionPersistedInGet(t *testing.T) {
 }
 
 func TestVersionPersistedInList(t *testing.T) {
+	ctx := context.Background()
 	store, err := NewInMemory()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Create and update epic
-	epic, _ := store.CreateEpic(core.Epic{
+	epic, _ := store.CreateEpic(ctx, core.Epic{
 		Project: "test-project",
 		Title:   "Test Epic",
 	})
 	epic.Title = "Updated"
-	epic, _ = store.UpdateEpic(epic)
+	epic, _ = store.UpdateEpic(ctx, epic)
 
 	// List and verify version is persisted
-	epics, err := store.ListEpics("test-project", "")
+	epics, err := store.ListEpics(ctx, "test-project", "")
 	if err != nil {
 		t.Fatalf("ListEpics: %v", err)
 	}

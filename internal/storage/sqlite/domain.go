@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 
 // Spec operations
 
-func (s *Store) CreateSpec(spec core.Spec) (core.Spec, error) {
+func (s *Store) CreateSpec(_ context.Context, spec core.Spec) (core.Spec, error) {
 	if spec.ID == "" {
 		spec.ID = uuid.NewString()
 	}
@@ -41,7 +42,7 @@ func (s *Store) CreateSpec(spec core.Spec) (core.Spec, error) {
 	return spec, nil
 }
 
-func (s *Store) GetSpec(project, id string) (core.Spec, error) {
+func (s *Store) GetSpec(_ context.Context, project, id string) (core.Spec, error) {
 	row := s.db.QueryRow(
 		`SELECT id, project, title, vision, users, problem, status, version, created_at, updated_at
 		 FROM specs WHERE project = ? AND id = ?`,
@@ -50,7 +51,7 @@ func (s *Store) GetSpec(project, id string) (core.Spec, error) {
 	return scanSpec(row)
 }
 
-func (s *Store) ListSpecs(project string, status string) ([]core.Spec, error) {
+func (s *Store) ListSpecs(_ context.Context, project string, status string) ([]core.Spec, error) {
 	query := `SELECT id, project, title, vision, users, problem, status, version, created_at, updated_at FROM specs`
 	var args []any
 	if project != "" {
@@ -83,7 +84,7 @@ func (s *Store) ListSpecs(project string, status string) ([]core.Spec, error) {
 	return specs, rows.Err()
 }
 
-func (s *Store) UpdateSpec(spec core.Spec) (core.Spec, error) {
+func (s *Store) UpdateSpec(_ context.Context, spec core.Spec) (core.Spec, error) {
 	spec.UpdatedAt = time.Now().UTC()
 	expectedVersion := spec.Version
 	spec.Version++
@@ -103,7 +104,7 @@ func (s *Store) UpdateSpec(spec core.Spec) (core.Spec, error) {
 	return spec, nil
 }
 
-func (s *Store) DeleteSpec(project, id string) error {
+func (s *Store) DeleteSpec(_ context.Context, project, id string) error {
 	_, err := s.db.Exec(`DELETE FROM specs WHERE project = ? AND id = ?`, project, id)
 	if err != nil {
 		return fmt.Errorf("delete spec: %w", err)
@@ -113,7 +114,7 @@ func (s *Store) DeleteSpec(project, id string) error {
 
 // Epic operations
 
-func (s *Store) CreateEpic(epic core.Epic) (core.Epic, error) {
+func (s *Store) CreateEpic(_ context.Context, epic core.Epic) (core.Epic, error) {
 	if epic.ID == "" {
 		epic.ID = uuid.NewString()
 	}
@@ -141,7 +142,7 @@ func (s *Store) CreateEpic(epic core.Epic) (core.Epic, error) {
 	return epic, nil
 }
 
-func (s *Store) GetEpic(project, id string) (core.Epic, error) {
+func (s *Store) GetEpic(_ context.Context, project, id string) (core.Epic, error) {
 	row := s.db.QueryRow(
 		`SELECT id, project, spec_id, title, description, status, version, created_at, updated_at
 		 FROM epics WHERE project = ? AND id = ?`,
@@ -150,7 +151,7 @@ func (s *Store) GetEpic(project, id string) (core.Epic, error) {
 	return scanEpic(row)
 }
 
-func (s *Store) ListEpics(project, specID string) ([]core.Epic, error) {
+func (s *Store) ListEpics(_ context.Context, project, specID string) ([]core.Epic, error) {
 	query := `SELECT id, project, spec_id, title, description, status, version, created_at, updated_at FROM epics`
 	var args []any
 	if project != "" {
@@ -183,7 +184,7 @@ func (s *Store) ListEpics(project, specID string) ([]core.Epic, error) {
 	return epics, rows.Err()
 }
 
-func (s *Store) UpdateEpic(epic core.Epic) (core.Epic, error) {
+func (s *Store) UpdateEpic(_ context.Context, epic core.Epic) (core.Epic, error) {
 	epic.UpdatedAt = time.Now().UTC()
 	expectedVersion := epic.Version
 	epic.Version++
@@ -203,7 +204,7 @@ func (s *Store) UpdateEpic(epic core.Epic) (core.Epic, error) {
 	return epic, nil
 }
 
-func (s *Store) DeleteEpic(project, id string) error {
+func (s *Store) DeleteEpic(_ context.Context, project, id string) error {
 	_, err := s.db.Exec(`DELETE FROM epics WHERE project = ? AND id = ?`, project, id)
 	if err != nil {
 		return fmt.Errorf("delete epic: %w", err)
@@ -213,7 +214,7 @@ func (s *Store) DeleteEpic(project, id string) error {
 
 // Story operations
 
-func (s *Store) CreateStory(story core.Story) (core.Story, error) {
+func (s *Store) CreateStory(_ context.Context, story core.Story) (core.Story, error) {
 	if story.ID == "" {
 		story.ID = uuid.NewString()
 	}
@@ -244,7 +245,7 @@ func (s *Store) CreateStory(story core.Story) (core.Story, error) {
 	return story, nil
 }
 
-func (s *Store) GetStory(project, id string) (core.Story, error) {
+func (s *Store) GetStory(_ context.Context, project, id string) (core.Story, error) {
 	row := s.db.QueryRow(
 		`SELECT id, project, epic_id, title, acceptance_criteria_json, status, version, created_at, updated_at
 		 FROM stories WHERE project = ? AND id = ?`,
@@ -253,7 +254,7 @@ func (s *Store) GetStory(project, id string) (core.Story, error) {
 	return scanStory(row)
 }
 
-func (s *Store) ListStories(project, epicID string) ([]core.Story, error) {
+func (s *Store) ListStories(_ context.Context, project, epicID string) ([]core.Story, error) {
 	query := `SELECT id, project, epic_id, title, acceptance_criteria_json, status, version, created_at, updated_at FROM stories`
 	var args []any
 	if project != "" {
@@ -286,7 +287,7 @@ func (s *Store) ListStories(project, epicID string) ([]core.Story, error) {
 	return stories, rows.Err()
 }
 
-func (s *Store) UpdateStory(story core.Story) (core.Story, error) {
+func (s *Store) UpdateStory(_ context.Context, story core.Story) (core.Story, error) {
 	story.UpdatedAt = time.Now().UTC()
 	expectedVersion := story.Version
 	story.Version++
@@ -310,7 +311,7 @@ func (s *Store) UpdateStory(story core.Story) (core.Story, error) {
 	return story, nil
 }
 
-func (s *Store) DeleteStory(project, id string) error {
+func (s *Store) DeleteStory(_ context.Context, project, id string) error {
 	_, err := s.db.Exec(`DELETE FROM stories WHERE project = ? AND id = ?`, project, id)
 	if err != nil {
 		return fmt.Errorf("delete story: %w", err)
@@ -320,7 +321,7 @@ func (s *Store) DeleteStory(project, id string) error {
 
 // Task operations
 
-func (s *Store) CreateTask(task core.Task) (core.Task, error) {
+func (s *Store) CreateTask(_ context.Context, task core.Task) (core.Task, error) {
 	if task.ID == "" {
 		task.ID = uuid.NewString()
 	}
@@ -348,7 +349,7 @@ func (s *Store) CreateTask(task core.Task) (core.Task, error) {
 	return task, nil
 }
 
-func (s *Store) GetTask(project, id string) (core.Task, error) {
+func (s *Store) GetTask(_ context.Context, project, id string) (core.Task, error) {
 	row := s.db.QueryRow(
 		`SELECT id, project, story_id, title, agent, session_id, status, version, created_at, updated_at
 		 FROM tasks WHERE project = ? AND id = ?`,
@@ -357,7 +358,7 @@ func (s *Store) GetTask(project, id string) (core.Task, error) {
 	return scanTask(row)
 }
 
-func (s *Store) ListTasks(project, status, agent string) ([]core.Task, error) {
+func (s *Store) ListTasks(_ context.Context, project, status, agent string) ([]core.Task, error) {
 	query := `SELECT id, project, story_id, title, agent, session_id, status, version, created_at, updated_at FROM tasks WHERE 1=1`
 	var args []any
 	if project != "" {
@@ -391,7 +392,7 @@ func (s *Store) ListTasks(project, status, agent string) ([]core.Task, error) {
 	return tasks, rows.Err()
 }
 
-func (s *Store) UpdateTask(task core.Task) (core.Task, error) {
+func (s *Store) UpdateTask(_ context.Context, task core.Task) (core.Task, error) {
 	task.UpdatedAt = time.Now().UTC()
 	expectedVersion := task.Version
 	task.Version++
@@ -411,7 +412,7 @@ func (s *Store) UpdateTask(task core.Task) (core.Task, error) {
 	return task, nil
 }
 
-func (s *Store) DeleteTask(project, id string) error {
+func (s *Store) DeleteTask(_ context.Context, project, id string) error {
 	_, err := s.db.Exec(`DELETE FROM tasks WHERE project = ? AND id = ?`, project, id)
 	if err != nil {
 		return fmt.Errorf("delete task: %w", err)
@@ -421,7 +422,7 @@ func (s *Store) DeleteTask(project, id string) error {
 
 // Insight operations
 
-func (s *Store) CreateInsight(insight core.Insight) (core.Insight, error) {
+func (s *Store) CreateInsight(_ context.Context, insight core.Insight) (core.Insight, error) {
 	if insight.ID == "" {
 		insight.ID = uuid.NewString()
 	}
@@ -441,7 +442,7 @@ func (s *Store) CreateInsight(insight core.Insight) (core.Insight, error) {
 	return insight, nil
 }
 
-func (s *Store) GetInsight(project, id string) (core.Insight, error) {
+func (s *Store) GetInsight(_ context.Context, project, id string) (core.Insight, error) {
 	row := s.db.QueryRow(
 		`SELECT id, project, spec_id, source, category, title, body, url, score, created_at
 		 FROM insights WHERE project = ? AND id = ?`,
@@ -450,7 +451,7 @@ func (s *Store) GetInsight(project, id string) (core.Insight, error) {
 	return scanInsight(row)
 }
 
-func (s *Store) ListInsights(project, specID, category string) ([]core.Insight, error) {
+func (s *Store) ListInsights(_ context.Context, project, specID, category string) ([]core.Insight, error) {
 	query := `SELECT id, project, spec_id, source, category, title, body, url, score, created_at FROM insights WHERE 1=1`
 	var args []any
 	if project != "" {
@@ -484,7 +485,7 @@ func (s *Store) ListInsights(project, specID, category string) ([]core.Insight, 
 	return insights, rows.Err()
 }
 
-func (s *Store) LinkInsightToSpec(project, insightID, specID string) error {
+func (s *Store) LinkInsightToSpec(_ context.Context, project, insightID, specID string) error {
 	_, err := s.db.Exec(
 		`UPDATE insights SET spec_id = ? WHERE project = ? AND id = ?`,
 		specID, project, insightID,
@@ -495,7 +496,7 @@ func (s *Store) LinkInsightToSpec(project, insightID, specID string) error {
 	return nil
 }
 
-func (s *Store) DeleteInsight(project, id string) error {
+func (s *Store) DeleteInsight(_ context.Context, project, id string) error {
 	_, err := s.db.Exec(`DELETE FROM insights WHERE project = ? AND id = ?`, project, id)
 	if err != nil {
 		return fmt.Errorf("delete insight: %w", err)
@@ -505,7 +506,7 @@ func (s *Store) DeleteInsight(project, id string) error {
 
 // Session operations
 
-func (s *Store) CreateSession(session core.Session) (core.Session, error) {
+func (s *Store) CreateSession(_ context.Context, session core.Session) (core.Session, error) {
 	if session.ID == "" {
 		session.ID = uuid.NewString()
 	}
@@ -532,7 +533,7 @@ func (s *Store) CreateSession(session core.Session) (core.Session, error) {
 	return session, nil
 }
 
-func (s *Store) GetSession(project, id string) (core.Session, error) {
+func (s *Store) GetSession(_ context.Context, project, id string) (core.Session, error) {
 	row := s.db.QueryRow(
 		`SELECT id, project, name, agent, task_id, status, started_at, updated_at
 		 FROM sessions WHERE project = ? AND id = ?`,
@@ -541,7 +542,7 @@ func (s *Store) GetSession(project, id string) (core.Session, error) {
 	return scanSession(row)
 }
 
-func (s *Store) ListSessions(project, status string) ([]core.Session, error) {
+func (s *Store) ListSessions(_ context.Context, project, status string) ([]core.Session, error) {
 	query := `SELECT id, project, name, agent, task_id, status, started_at, updated_at FROM sessions WHERE 1=1`
 	var args []any
 	if project != "" {
@@ -571,7 +572,7 @@ func (s *Store) ListSessions(project, status string) ([]core.Session, error) {
 	return sessions, rows.Err()
 }
 
-func (s *Store) UpdateSession(session core.Session) (core.Session, error) {
+func (s *Store) UpdateSession(_ context.Context, session core.Session) (core.Session, error) {
 	session.UpdatedAt = time.Now().UTC()
 	_, err := s.db.Exec(
 		`UPDATE sessions SET name = ?, agent = ?, task_id = ?, status = ?, updated_at = ?
@@ -585,7 +586,7 @@ func (s *Store) UpdateSession(session core.Session) (core.Session, error) {
 	return session, nil
 }
 
-func (s *Store) DeleteSession(project, id string) error {
+func (s *Store) DeleteSession(_ context.Context, project, id string) error {
 	_, err := s.db.Exec(`DELETE FROM sessions WHERE project = ? AND id = ?`, project, id)
 	if err != nil {
 		return fmt.Errorf("delete session: %w", err)
@@ -732,7 +733,7 @@ func scanSessionRow(rows *sql.Rows) (core.Session, error) {
 
 // CUJ (Critical User Journey) operations
 
-func (s *Store) CreateCUJ(cuj core.CriticalUserJourney) (core.CriticalUserJourney, error) {
+func (s *Store) CreateCUJ(_ context.Context, cuj core.CriticalUserJourney) (core.CriticalUserJourney, error) {
 	if cuj.ID == "" {
 		cuj.ID = uuid.NewString()
 	}
@@ -779,7 +780,7 @@ func (s *Store) CreateCUJ(cuj core.CriticalUserJourney) (core.CriticalUserJourne
 	return cuj, nil
 }
 
-func (s *Store) GetCUJ(project, id string) (core.CriticalUserJourney, error) {
+func (s *Store) GetCUJ(_ context.Context, project, id string) (core.CriticalUserJourney, error) {
 	row := s.db.QueryRow(
 		`SELECT id, project, spec_id, title, persona, priority, entry_point, exit_point,
 		 steps_json, success_criteria_json, error_recovery_json, status, version, created_at, updated_at
@@ -789,7 +790,7 @@ func (s *Store) GetCUJ(project, id string) (core.CriticalUserJourney, error) {
 	return scanCUJ(row)
 }
 
-func (s *Store) ListCUJs(project, specID string) ([]core.CriticalUserJourney, error) {
+func (s *Store) ListCUJs(_ context.Context, project, specID string) ([]core.CriticalUserJourney, error) {
 	query := `SELECT id, project, spec_id, title, persona, priority, entry_point, exit_point,
 		steps_json, success_criteria_json, error_recovery_json, status, version, created_at, updated_at
 		FROM cujs`
@@ -824,7 +825,7 @@ func (s *Store) ListCUJs(project, specID string) ([]core.CriticalUserJourney, er
 	return cujs, rows.Err()
 }
 
-func (s *Store) UpdateCUJ(cuj core.CriticalUserJourney) (core.CriticalUserJourney, error) {
+func (s *Store) UpdateCUJ(_ context.Context, cuj core.CriticalUserJourney) (core.CriticalUserJourney, error) {
 	cuj.UpdatedAt = time.Now().UTC()
 	expectedVersion := cuj.Version
 	cuj.Version++
@@ -860,7 +861,7 @@ func (s *Store) UpdateCUJ(cuj core.CriticalUserJourney) (core.CriticalUserJourne
 	return cuj, nil
 }
 
-func (s *Store) DeleteCUJ(project, id string) error {
+func (s *Store) DeleteCUJ(_ context.Context, project, id string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin delete cuj: %w", err)
@@ -878,7 +879,7 @@ func (s *Store) DeleteCUJ(project, id string) error {
 	return tx.Commit()
 }
 
-func (s *Store) LinkCUJToFeature(project, cujID, featureID string) error {
+func (s *Store) LinkCUJToFeature(_ context.Context, project, cujID, featureID string) error {
 	now := time.Now().UTC()
 	_, err := s.db.Exec(
 		`INSERT INTO cuj_feature_links (project, cuj_id, feature_id, linked_at)
@@ -892,7 +893,7 @@ func (s *Store) LinkCUJToFeature(project, cujID, featureID string) error {
 	return nil
 }
 
-func (s *Store) UnlinkCUJFromFeature(project, cujID, featureID string) error {
+func (s *Store) UnlinkCUJFromFeature(_ context.Context, project, cujID, featureID string) error {
 	_, err := s.db.Exec(
 		`DELETE FROM cuj_feature_links WHERE project = ? AND cuj_id = ? AND feature_id = ?`,
 		project, cujID, featureID,
@@ -903,7 +904,7 @@ func (s *Store) UnlinkCUJFromFeature(project, cujID, featureID string) error {
 	return nil
 }
 
-func (s *Store) GetCUJFeatureLinks(project, cujID string) ([]core.CUJFeatureLink, error) {
+func (s *Store) GetCUJFeatureLinks(_ context.Context, project, cujID string) ([]core.CUJFeatureLink, error) {
 	rows, err := s.db.Query(
 		`SELECT project, cuj_id, feature_id, linked_at FROM cuj_feature_links WHERE project = ? AND cuj_id = ?`,
 		project, cujID,

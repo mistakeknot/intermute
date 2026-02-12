@@ -73,7 +73,7 @@ func (s *DomainService) createSpec(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	created, err := s.domainStore.CreateSpec(spec)
+	created, err := s.domainStore.CreateSpec(r.Context(), spec)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -90,7 +90,7 @@ func (s *DomainService) getSpec(w http.ResponseWriter, r *http.Request, id strin
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	spec, err := s.domainStore.GetSpec(project, id)
+	spec, err := s.domainStore.GetSpec(r.Context(), project, id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -106,7 +106,7 @@ func (s *DomainService) listSpecs(w http.ResponseWriter, r *http.Request) {
 		project = r.URL.Query().Get("project")
 	}
 	status := r.URL.Query().Get("status")
-	specs, err := s.domainStore.ListSpecs(project, status)
+	specs, err := s.domainStore.ListSpecs(r.Context(), project, status)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -130,7 +130,7 @@ func (s *DomainService) updateSpec(w http.ResponseWriter, r *http.Request, id st
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	updated, err := s.domainStore.UpdateSpec(spec)
+	updated, err := s.domainStore.UpdateSpec(r.Context(), spec)
 	if err != nil {
 		if errors.Is(err, core.ErrConcurrentModification) {
 			w.WriteHeader(http.StatusConflict)
@@ -150,7 +150,7 @@ func (s *DomainService) deleteSpec(w http.ResponseWriter, r *http.Request, id st
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	if err := s.domainStore.DeleteSpec(project, id); err != nil {
+	if err := s.domainStore.DeleteSpec(r.Context(), project, id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -202,7 +202,7 @@ func (s *DomainService) createEpic(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	created, err := s.domainStore.CreateEpic(epic)
+	created, err := s.domainStore.CreateEpic(r.Context(), epic)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -219,7 +219,7 @@ func (s *DomainService) getEpic(w http.ResponseWriter, r *http.Request, id strin
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	epic, err := s.domainStore.GetEpic(project, id)
+	epic, err := s.domainStore.GetEpic(r.Context(), project, id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -235,7 +235,7 @@ func (s *DomainService) listEpics(w http.ResponseWriter, r *http.Request) {
 		project = r.URL.Query().Get("project")
 	}
 	specID := r.URL.Query().Get("spec")
-	epics, err := s.domainStore.ListEpics(project, specID)
+	epics, err := s.domainStore.ListEpics(r.Context(), project, specID)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -259,7 +259,7 @@ func (s *DomainService) updateEpic(w http.ResponseWriter, r *http.Request, id st
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	updated, err := s.domainStore.UpdateEpic(epic)
+	updated, err := s.domainStore.UpdateEpic(r.Context(), epic)
 	if err != nil {
 		if errors.Is(err, core.ErrConcurrentModification) {
 			w.WriteHeader(http.StatusConflict)
@@ -279,7 +279,7 @@ func (s *DomainService) deleteEpic(w http.ResponseWriter, r *http.Request, id st
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	if err := s.domainStore.DeleteEpic(project, id); err != nil {
+	if err := s.domainStore.DeleteEpic(r.Context(), project, id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -330,7 +330,7 @@ func (s *DomainService) createStory(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	created, err := s.domainStore.CreateStory(story)
+	created, err := s.domainStore.CreateStory(r.Context(), story)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -347,7 +347,7 @@ func (s *DomainService) getStory(w http.ResponseWriter, r *http.Request, id stri
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	story, err := s.domainStore.GetStory(project, id)
+	story, err := s.domainStore.GetStory(r.Context(), project, id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -363,7 +363,7 @@ func (s *DomainService) listStories(w http.ResponseWriter, r *http.Request) {
 		project = r.URL.Query().Get("project")
 	}
 	epicID := r.URL.Query().Get("epic")
-	stories, err := s.domainStore.ListStories(project, epicID)
+	stories, err := s.domainStore.ListStories(r.Context(), project, epicID)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -387,7 +387,7 @@ func (s *DomainService) updateStory(w http.ResponseWriter, r *http.Request, id s
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	updated, err := s.domainStore.UpdateStory(story)
+	updated, err := s.domainStore.UpdateStory(r.Context(), story)
 	if err != nil {
 		if errors.Is(err, core.ErrConcurrentModification) {
 			w.WriteHeader(http.StatusConflict)
@@ -407,7 +407,7 @@ func (s *DomainService) deleteStory(w http.ResponseWriter, r *http.Request, id s
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	if err := s.domainStore.DeleteStory(project, id); err != nil {
+	if err := s.domainStore.DeleteStory(r.Context(), project, id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -464,7 +464,7 @@ func (s *DomainService) createTask(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	created, err := s.domainStore.CreateTask(task)
+	created, err := s.domainStore.CreateTask(r.Context(), task)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -481,7 +481,7 @@ func (s *DomainService) getTask(w http.ResponseWriter, r *http.Request, id strin
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	task, err := s.domainStore.GetTask(project, id)
+	task, err := s.domainStore.GetTask(r.Context(), project, id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -498,7 +498,7 @@ func (s *DomainService) listTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	status := r.URL.Query().Get("status")
 	agent := r.URL.Query().Get("agent")
-	tasks, err := s.domainStore.ListTasks(project, status, agent)
+	tasks, err := s.domainStore.ListTasks(r.Context(), project, status, agent)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -522,7 +522,7 @@ func (s *DomainService) updateTask(w http.ResponseWriter, r *http.Request, id st
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	updated, err := s.domainStore.UpdateTask(task)
+	updated, err := s.domainStore.UpdateTask(r.Context(), task)
 	if err != nil {
 		if errors.Is(err, core.ErrConcurrentModification) {
 			w.WriteHeader(http.StatusConflict)
@@ -555,14 +555,14 @@ func (s *DomainService) assignTask(w http.ResponseWriter, r *http.Request, id st
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	task, err := s.domainStore.GetTask(project, id)
+	task, err := s.domainStore.GetTask(r.Context(), project, id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	task.Agent = req.Agent
 	task.Status = core.TaskStatusRunning
-	updated, err := s.domainStore.UpdateTask(task)
+	updated, err := s.domainStore.UpdateTask(r.Context(), task)
 	if err != nil {
 		if errors.Is(err, core.ErrConcurrentModification) {
 			w.WriteHeader(http.StatusConflict)
@@ -582,7 +582,7 @@ func (s *DomainService) deleteTask(w http.ResponseWriter, r *http.Request, id st
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	if err := s.domainStore.DeleteTask(project, id); err != nil {
+	if err := s.domainStore.DeleteTask(r.Context(), project, id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -637,7 +637,7 @@ func (s *DomainService) createInsight(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	created, err := s.domainStore.CreateInsight(insight)
+	created, err := s.domainStore.CreateInsight(r.Context(), insight)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -654,7 +654,7 @@ func (s *DomainService) getInsight(w http.ResponseWriter, r *http.Request, id st
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	insight, err := s.domainStore.GetInsight(project, id)
+	insight, err := s.domainStore.GetInsight(r.Context(), project, id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -671,7 +671,7 @@ func (s *DomainService) listInsights(w http.ResponseWriter, r *http.Request) {
 	}
 	specID := r.URL.Query().Get("spec")
 	category := r.URL.Query().Get("category")
-	insights, err := s.domainStore.ListInsights(project, specID, category)
+	insights, err := s.domainStore.ListInsights(r.Context(), project, specID, category)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -700,7 +700,7 @@ func (s *DomainService) linkInsight(w http.ResponseWriter, r *http.Request, id s
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	if err := s.domainStore.LinkInsightToSpec(project, id, req.SpecID); err != nil {
+	if err := s.domainStore.LinkInsightToSpec(r.Context(), project, id, req.SpecID); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -714,7 +714,7 @@ func (s *DomainService) deleteInsight(w http.ResponseWriter, r *http.Request, id
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	if err := s.domainStore.DeleteInsight(project, id); err != nil {
+	if err := s.domainStore.DeleteInsight(r.Context(), project, id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -765,7 +765,7 @@ func (s *DomainService) createSession(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	created, err := s.domainStore.CreateSession(session)
+	created, err := s.domainStore.CreateSession(r.Context(), session)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -782,7 +782,7 @@ func (s *DomainService) getSession(w http.ResponseWriter, r *http.Request, id st
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	session, err := s.domainStore.GetSession(project, id)
+	session, err := s.domainStore.GetSession(r.Context(), project, id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -798,7 +798,7 @@ func (s *DomainService) listSessions(w http.ResponseWriter, r *http.Request) {
 		project = r.URL.Query().Get("project")
 	}
 	status := r.URL.Query().Get("status")
-	sessions, err := s.domainStore.ListSessions(project, status)
+	sessions, err := s.domainStore.ListSessions(r.Context(), project, status)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -822,7 +822,7 @@ func (s *DomainService) updateSession(w http.ResponseWriter, r *http.Request, id
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	updated, err := s.domainStore.UpdateSession(session)
+	updated, err := s.domainStore.UpdateSession(r.Context(), session)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -837,7 +837,7 @@ func (s *DomainService) deleteSession(w http.ResponseWriter, r *http.Request, id
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	if err := s.domainStore.DeleteSession(project, id); err != nil {
+	if err := s.domainStore.DeleteSession(r.Context(), project, id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -918,7 +918,7 @@ func (s *DomainService) createCUJ(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	created, err := s.domainStore.CreateCUJ(cuj)
+	created, err := s.domainStore.CreateCUJ(r.Context(), cuj)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -935,7 +935,7 @@ func (s *DomainService) getCUJ(w http.ResponseWriter, r *http.Request, id string
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	cuj, err := s.domainStore.GetCUJ(project, id)
+	cuj, err := s.domainStore.GetCUJ(r.Context(), project, id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -951,7 +951,7 @@ func (s *DomainService) listCUJs(w http.ResponseWriter, r *http.Request) {
 		project = r.URL.Query().Get("project")
 	}
 	specID := r.URL.Query().Get("spec")
-	cujs, err := s.domainStore.ListCUJs(project, specID)
+	cujs, err := s.domainStore.ListCUJs(r.Context(), project, specID)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -982,7 +982,7 @@ func (s *DomainService) updateCUJ(w http.ResponseWriter, r *http.Request, id str
 		eventType = core.EventCUJValidated
 	}
 
-	updated, err := s.domainStore.UpdateCUJ(cuj)
+	updated, err := s.domainStore.UpdateCUJ(r.Context(), cuj)
 	if err != nil {
 		if errors.Is(err, core.ErrConcurrentModification) {
 			w.WriteHeader(http.StatusConflict)
@@ -1002,7 +1002,7 @@ func (s *DomainService) deleteCUJ(w http.ResponseWriter, r *http.Request, id str
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	if err := s.domainStore.DeleteCUJ(project, id); err != nil {
+	if err := s.domainStore.DeleteCUJ(r.Context(), project, id); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -1027,7 +1027,7 @@ func (s *DomainService) linkCUJToFeature(w http.ResponseWriter, r *http.Request,
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	if err := s.domainStore.LinkCUJToFeature(project, cujID, req.FeatureID); err != nil {
+	if err := s.domainStore.LinkCUJToFeature(r.Context(), project, cujID, req.FeatureID); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -1051,7 +1051,7 @@ func (s *DomainService) unlinkCUJFromFeature(w http.ResponseWriter, r *http.Requ
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	if err := s.domainStore.UnlinkCUJFromFeature(project, cujID, req.FeatureID); err != nil {
+	if err := s.domainStore.UnlinkCUJFromFeature(r.Context(), project, cujID, req.FeatureID); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
@@ -1068,7 +1068,7 @@ func (s *DomainService) getCUJFeatureLinks(w http.ResponseWriter, r *http.Reques
 	if project == "" {
 		project = r.URL.Query().Get("project")
 	}
-	links, err := s.domainStore.GetCUJFeatureLinks(project, cujID)
+	links, err := s.domainStore.GetCUJFeatureLinks(r.Context(), project, cujID)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

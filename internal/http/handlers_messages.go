@@ -97,7 +97,7 @@ func (s *Service) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		AckRequired: req.AckRequired,
 		CreatedAt:   time.Now().UTC(),
 	}
-	cursor, err := s.store.AppendEvent(core.Event{Type: core.EventMessageCreated, Project: project, Message: msg})
+	cursor, err := s.store.AppendEvent(r.Context(), core.Event{Type: core.EventMessageCreated, Project: project, Message: msg})
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -150,7 +150,7 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 			limit = parsed
 		}
 	}
-	msgs, err := s.store.InboxSince(project, agent, cursor, limit)
+	msgs, err := s.store.InboxSince(r.Context(), project, agent, cursor, limit)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -206,7 +206,7 @@ func (s *Service) handleInboxCounts(w http.ResponseWriter, r *http.Request) {
 		project = strings.TrimSpace(r.URL.Query().Get("project"))
 	}
 
-	total, unread, err := s.store.InboxCounts(project, agent)
+	total, unread, err := s.store.InboxCounts(r.Context(), project, agent)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -261,13 +261,13 @@ func (s *Service) handleMessageAction(w http.ResponseWriter, r *http.Request) {
 	if agentID != "" {
 		switch action {
 		case "read":
-			_ = s.store.MarkRead(project, msgID, agentID)
+			_ = s.store.MarkRead(r.Context(), project, msgID, agentID)
 		case "ack":
-			_ = s.store.MarkAck(project, msgID, agentID)
+			_ = s.store.MarkAck(r.Context(), project, msgID, agentID)
 		}
 	}
 
-	_, err := s.store.AppendEvent(core.Event{Type: evType, Agent: agentID, Project: project, Message: core.Message{ID: msgID, Project: project}})
+	_, err := s.store.AppendEvent(r.Context(), core.Event{Type: evType, Agent: agentID, Project: project, Message: core.Message{ID: msgID, Project: project}})
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

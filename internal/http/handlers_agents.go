@@ -66,7 +66,7 @@ func (s *Service) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	agents, err := s.store.ListAgents(project)
+	agents, err := s.store.ListAgents(r.Context(), project)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -113,7 +113,7 @@ func (s *Service) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	agent, err := s.store.RegisterAgent(core.Agent{
+	agent, err := s.store.RegisterAgent(r.Context(), core.Agent{
 		Name:         req.Name,
 		Project:      strings.TrimSpace(req.Project),
 		Capabilities: req.Capabilities,
@@ -160,7 +160,7 @@ func (s *Service) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		project = info.Project
 	}
 
-	agent, err := s.store.Heartbeat(project, id)
+	agent, err := s.store.Heartbeat(r.Context(), project, id)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return

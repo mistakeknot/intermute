@@ -1,60 +1,64 @@
 package storage
 
-import "github.com/mistakeknot/intermute/internal/core"
+import (
+	"context"
+
+	"github.com/mistakeknot/intermute/internal/core"
+)
 
 // DomainStore extends Store with domain entity operations
 type DomainStore interface {
 	Store
 
 	// Spec operations
-	CreateSpec(spec core.Spec) (core.Spec, error)
-	GetSpec(project, id string) (core.Spec, error)
-	ListSpecs(project, status string) ([]core.Spec, error)
-	UpdateSpec(spec core.Spec) (core.Spec, error)
-	DeleteSpec(project, id string) error
+	CreateSpec(ctx context.Context, spec core.Spec) (core.Spec, error)
+	GetSpec(ctx context.Context, project, id string) (core.Spec, error)
+	ListSpecs(ctx context.Context, project, status string) ([]core.Spec, error)
+	UpdateSpec(ctx context.Context, spec core.Spec) (core.Spec, error)
+	DeleteSpec(ctx context.Context, project, id string) error
 
 	// Epic operations
-	CreateEpic(epic core.Epic) (core.Epic, error)
-	GetEpic(project, id string) (core.Epic, error)
-	ListEpics(project, specID string) ([]core.Epic, error)
-	UpdateEpic(epic core.Epic) (core.Epic, error)
-	DeleteEpic(project, id string) error
+	CreateEpic(ctx context.Context, epic core.Epic) (core.Epic, error)
+	GetEpic(ctx context.Context, project, id string) (core.Epic, error)
+	ListEpics(ctx context.Context, project, specID string) ([]core.Epic, error)
+	UpdateEpic(ctx context.Context, epic core.Epic) (core.Epic, error)
+	DeleteEpic(ctx context.Context, project, id string) error
 
 	// Story operations
-	CreateStory(story core.Story) (core.Story, error)
-	GetStory(project, id string) (core.Story, error)
-	ListStories(project, epicID string) ([]core.Story, error)
-	UpdateStory(story core.Story) (core.Story, error)
-	DeleteStory(project, id string) error
+	CreateStory(ctx context.Context, story core.Story) (core.Story, error)
+	GetStory(ctx context.Context, project, id string) (core.Story, error)
+	ListStories(ctx context.Context, project, epicID string) ([]core.Story, error)
+	UpdateStory(ctx context.Context, story core.Story) (core.Story, error)
+	DeleteStory(ctx context.Context, project, id string) error
 
 	// Task operations
-	CreateTask(task core.Task) (core.Task, error)
-	GetTask(project, id string) (core.Task, error)
-	ListTasks(project, status, agent string) ([]core.Task, error)
-	UpdateTask(task core.Task) (core.Task, error)
-	DeleteTask(project, id string) error
+	CreateTask(ctx context.Context, task core.Task) (core.Task, error)
+	GetTask(ctx context.Context, project, id string) (core.Task, error)
+	ListTasks(ctx context.Context, project, status, agent string) ([]core.Task, error)
+	UpdateTask(ctx context.Context, task core.Task) (core.Task, error)
+	DeleteTask(ctx context.Context, project, id string) error
 
 	// Insight operations
-	CreateInsight(insight core.Insight) (core.Insight, error)
-	GetInsight(project, id string) (core.Insight, error)
-	ListInsights(project, specID, category string) ([]core.Insight, error)
-	LinkInsightToSpec(project, insightID, specID string) error
-	DeleteInsight(project, id string) error
+	CreateInsight(ctx context.Context, insight core.Insight) (core.Insight, error)
+	GetInsight(ctx context.Context, project, id string) (core.Insight, error)
+	ListInsights(ctx context.Context, project, specID, category string) ([]core.Insight, error)
+	LinkInsightToSpec(ctx context.Context, project, insightID, specID string) error
+	DeleteInsight(ctx context.Context, project, id string) error
 
 	// Session operations
-	CreateSession(session core.Session) (core.Session, error)
-	GetSession(project, id string) (core.Session, error)
-	ListSessions(project, status string) ([]core.Session, error)
-	UpdateSession(session core.Session) (core.Session, error)
-	DeleteSession(project, id string) error
+	CreateSession(ctx context.Context, session core.Session) (core.Session, error)
+	GetSession(ctx context.Context, project, id string) (core.Session, error)
+	ListSessions(ctx context.Context, project, status string) ([]core.Session, error)
+	UpdateSession(ctx context.Context, session core.Session) (core.Session, error)
+	DeleteSession(ctx context.Context, project, id string) error
 
 	// CUJ (Critical User Journey) operations
-	CreateCUJ(cuj core.CriticalUserJourney) (core.CriticalUserJourney, error)
-	GetCUJ(project, id string) (core.CriticalUserJourney, error)
-	ListCUJs(project, specID string) ([]core.CriticalUserJourney, error)
-	UpdateCUJ(cuj core.CriticalUserJourney) (core.CriticalUserJourney, error)
-	DeleteCUJ(project, id string) error
-	LinkCUJToFeature(project, cujID, featureID string) error
-	UnlinkCUJFromFeature(project, cujID, featureID string) error
-	GetCUJFeatureLinks(project, cujID string) ([]core.CUJFeatureLink, error)
+	CreateCUJ(ctx context.Context, cuj core.CriticalUserJourney) (core.CriticalUserJourney, error)
+	GetCUJ(ctx context.Context, project, id string) (core.CriticalUserJourney, error)
+	ListCUJs(ctx context.Context, project, specID string) ([]core.CriticalUserJourney, error)
+	UpdateCUJ(ctx context.Context, cuj core.CriticalUserJourney) (core.CriticalUserJourney, error)
+	DeleteCUJ(ctx context.Context, project, id string) error
+	LinkCUJToFeature(ctx context.Context, project, cujID, featureID string) error
+	UnlinkCUJFromFeature(ctx context.Context, project, cujID, featureID string) error
+	GetCUJFeatureLinks(ctx context.Context, project, cujID string) ([]core.CUJFeatureLink, error)
 }

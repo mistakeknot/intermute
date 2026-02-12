@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS file_reservations (
 
 CREATE INDEX IF NOT EXISTS idx_reservations_project ON file_reservations(project);
 CREATE INDEX IF NOT EXISTS idx_reservations_agent ON file_reservations(agent_id);
+CREATE INDEX IF NOT EXISTS idx_reservations_active ON file_reservations(project, expires_at) WHERE released_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY,
@@ -82,6 +83,9 @@ CREATE TABLE IF NOT EXISTS thread_index (
   agent TEXT NOT NULL,
   last_cursor INTEGER NOT NULL,
   message_count INTEGER NOT NULL DEFAULT 1,
+  last_message_from TEXT NOT NULL DEFAULT '',
+  last_message_body TEXT NOT NULL DEFAULT '',
+  last_message_at TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (project, thread_id, agent)
 );
 

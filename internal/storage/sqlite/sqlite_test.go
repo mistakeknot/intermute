@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"path/filepath"
@@ -11,10 +12,11 @@ import (
 )
 
 func TestSQLiteInboxSinceCursor(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
-	c1, _ := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Agent: "a", Message: core.Message{ID: "m1", Project: "proj-a", From: "x", To: []string{"a"}, Body: "hi"}})
-	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Agent: "a", Message: core.Message{ID: "m2", Project: "proj-a", From: "x", To: []string{"a"}, Body: "hi2"}})
-	msgs, err := st.InboxSince("proj-a", "a", c1, 0)
+	c1, _ := st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Agent: "a", Message: core.Message{ID: "m1", Project: "proj-a", From: "x", To: []string{"a"}, Body: "hi"}})
+	_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Agent: "a", Message: core.Message{ID: "m2", Project: "proj-a", From: "x", To: []string{"a"}, Body: "hi2"}})
+	msgs, err := st.InboxSince(ctx, "proj-a", "a", c1, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -27,11 +29,12 @@ func TestSQLiteInboxSinceCursor(t *testing.T) {
 }
 
 func TestSQLiteProjectIsolation(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
-	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{ID: "m1", Project: "proj-a", From: "x", To: []string{"a"}}})
-	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{ID: "m2", Project: "proj-b", From: "x", To: []string{"a"}}})
+	_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{ID: "m1", Project: "proj-a", From: "x", To: []string{"a"}}})
+	_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{ID: "m2", Project: "proj-b", From: "x", To: []string{"a"}}})
 
-	msgsA, err := st.InboxSince("proj-a", "a", 0, 0)
+	msgsA, err := st.InboxSince(ctx, "proj-a", "a", 0, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -41,20 +44,21 @@ func TestSQLiteProjectIsolation(t *testing.T) {
 }
 
 func TestSQLiteListAgents(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Register agents in different projects
-	_, err := st.RegisterAgent(core.Agent{Name: "agent-a", Project: "proj-a", Status: "active"})
+	_, err := st.RegisterAgent(ctx, core.Agent{Name: "agent-a", Project: "proj-a", Status: "active"})
 	if err != nil {
 		t.Fatalf("register agent-a: %v", err)
 	}
-	_, err = st.RegisterAgent(core.Agent{Name: "agent-b", Project: "proj-b", Status: "idle"})
+	_, err = st.RegisterAgent(ctx, core.Agent{Name: "agent-b", Project: "proj-b", Status: "idle"})
 	if err != nil {
 		t.Fatalf("register agent-b: %v", err)
 	}
 
 	// List all agents
-	all, err := st.ListAgents("")
+	all, err := st.ListAgents(ctx, "")
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
@@ -63,7 +67,7 @@ func TestSQLiteListAgents(t *testing.T) {
 	}
 
 	// List by project
-	projA, err := st.ListAgents("proj-a")
+	projA, err := st.ListAgents(ctx, "proj-a")
 	if err != nil {
 		t.Fatalf("list proj-a: %v", err)
 	}
@@ -76,16 +80,17 @@ func TestSQLiteListAgents(t *testing.T) {
 }
 
 func TestSQLiteListAgentsOrderByLastSeen(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Register two agents
-	a1, _ := st.RegisterAgent(core.Agent{Name: "agent-first", Project: "proj"})
-	_, _ = st.RegisterAgent(core.Agent{Name: "agent-second", Project: "proj"})
+	a1, _ := st.RegisterAgent(ctx, core.Agent{Name: "agent-first", Project: "proj"})
+	_, _ = st.RegisterAgent(ctx, core.Agent{Name: "agent-second", Project: "proj"})
 
 	// Heartbeat the first agent to make it more recent
-	_, _ = st.Heartbeat("proj", a1.ID)
+	_, _ = st.Heartbeat(ctx, "proj", a1.ID)
 
-	agents, err := st.ListAgents("proj")
+	agents, err := st.ListAgents(ctx, "proj")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -99,22 +104,23 @@ func TestSQLiteListAgentsOrderByLastSeen(t *testing.T) {
 }
 
 func TestSQLiteThreadMessages(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Create messages in a thread
-	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+	_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 		ID: "m1", ThreadID: "thread-1", Project: "proj", From: "alice", To: []string{"bob"}, Body: "Hello",
 	}})
-	c2, _ := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+	c2, _ := st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 		ID: "m2", ThreadID: "thread-1", Project: "proj", From: "bob", To: []string{"alice"}, Body: "Hi back",
 	}})
 	// Message in different thread
-	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+	_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 		ID: "m3", ThreadID: "thread-2", Project: "proj", From: "alice", To: []string{"bob"}, Body: "Other thread",
 	}})
 
 	// Get all messages in thread-1
-	msgs, err := st.ThreadMessages("proj", "thread-1", 0)
+	msgs, err := st.ThreadMessages(ctx, "proj", "thread-1", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +132,7 @@ func TestSQLiteThreadMessages(t *testing.T) {
 	}
 
 	// Get messages after cursor
-	msgs, err = st.ThreadMessages("proj", "thread-1", c2)
+	msgs, err = st.ThreadMessages(ctx, "proj", "thread-1", c2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,21 +142,22 @@ func TestSQLiteThreadMessages(t *testing.T) {
 }
 
 func TestSQLiteListThreads(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Create messages in threads
-	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+	_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 		ID: "m1", ThreadID: "thread-1", Project: "proj", From: "alice", To: []string{"bob"}, Body: "Hello",
 	}})
-	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+	_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 		ID: "m2", ThreadID: "thread-1", Project: "proj", From: "bob", To: []string{"alice"}, Body: "Hi back",
 	}})
-	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+	_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 		ID: "m3", ThreadID: "thread-2", Project: "proj", From: "alice", To: []string{"bob"}, Body: "Another thread",
 	}})
 
 	// List threads for bob
-	threads, err := st.ListThreads("proj", "bob", 0, 10)
+	threads, err := st.ListThreads(ctx, "proj", "bob", 0, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,18 +174,19 @@ func TestSQLiteListThreads(t *testing.T) {
 }
 
 func TestSQLiteThreadProjectIsolation(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Create threads in different projects
-	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+	_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 		ID: "m1", ThreadID: "thread-1", Project: "proj-a", From: "alice", To: []string{"bob"}, Body: "Proj A",
 	}})
-	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+	_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 		ID: "m2", ThreadID: "thread-1", Project: "proj-b", From: "alice", To: []string{"bob"}, Body: "Proj B",
 	}})
 
 	// List threads should be isolated by project
-	threadsA, err := st.ListThreads("proj-a", "bob", 0, 10)
+	threadsA, err := st.ListThreads(ctx, "proj-a", "bob", 0, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -186,7 +194,7 @@ func TestSQLiteThreadProjectIsolation(t *testing.T) {
 		t.Fatalf("expected 1 thread in proj-a, got %d", len(threadsA))
 	}
 
-	threadsB, err := st.ListThreads("proj-b", "bob", 0, 10)
+	threadsB, err := st.ListThreads(ctx, "proj-b", "bob", 0, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -196,12 +204,13 @@ func TestSQLiteThreadProjectIsolation(t *testing.T) {
 }
 
 func TestSQLiteThreadPagination(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Create multiple threads
 	var lastCursor uint64
 	for i := 1; i <= 5; i++ {
-		c, _ := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		c, _ := st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 			ID: "m" + string(rune('0'+i)), ThreadID: "thread-" + string(rune('0'+i)), Project: "proj", From: "alice", To: []string{"bob"}, Body: "Message",
 		}})
 		if i == 3 {
@@ -210,7 +219,7 @@ func TestSQLiteThreadPagination(t *testing.T) {
 	}
 
 	// Get threads with limit
-	threads, err := st.ListThreads("proj", "bob", 0, 2)
+	threads, err := st.ListThreads(ctx, "proj", "bob", 0, 2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -219,7 +228,7 @@ func TestSQLiteThreadPagination(t *testing.T) {
 	}
 
 	// Get threads after cursor
-	threads, err = st.ListThreads("proj", "bob", lastCursor, 10)
+	threads, err = st.ListThreads(ctx, "proj", "bob", lastCursor, 10)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -229,16 +238,17 @@ func TestSQLiteThreadPagination(t *testing.T) {
 }
 
 func TestSQLiteThreadPaginationCursorFromPage(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Create multiple threads with increasing cursors.
 	for i := 1; i <= 5; i++ {
-		_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		_, _ = st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 			ID: "m" + string(rune('0'+i)), ThreadID: "thread-" + string(rune('0'+i)), Project: "proj", From: "alice", To: []string{"bob"}, Body: "Message",
 		}})
 	}
 
-	firstPage, err := st.ListThreads("proj", "bob", 0, 2)
+	firstPage, err := st.ListThreads(ctx, "proj", "bob", 0, 2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -248,7 +258,7 @@ func TestSQLiteThreadPaginationCursorFromPage(t *testing.T) {
 
 	// Use the last item on the page as the next cursor.
 	nextCursor := firstPage[len(firstPage)-1].LastCursor
-	secondPage, err := st.ListThreads("proj", "bob", nextCursor, 2)
+	secondPage, err := st.ListThreads(ctx, "proj", "bob", nextCursor, 2)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -261,10 +271,11 @@ func TestSQLiteThreadPaginationCursorFromPage(t *testing.T) {
 }
 
 func TestFileReservation(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Reserve a file
-	res, err := st.Reserve(core.Reservation{
+	res, err := st.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-1",
 		Project:     "autarch",
 		PathPattern: "pkg/events/*.go",
@@ -279,7 +290,7 @@ func TestFileReservation(t *testing.T) {
 		t.Error("expected reservation ID")
 	}
 
-	got, err := st.GetReservation(res.ID)
+	got, err := st.GetReservation(ctx, res.ID)
 	if err != nil {
 		t.Fatalf("get reservation: %v", err)
 	}
@@ -288,7 +299,7 @@ func TestFileReservation(t *testing.T) {
 	}
 
 	// Check active reservations
-	active, err := st.ActiveReservations("autarch")
+	active, err := st.ActiveReservations(ctx, "autarch")
 	if err != nil {
 		t.Fatalf("active reservations: %v", err)
 	}
@@ -300,7 +311,7 @@ func TestFileReservation(t *testing.T) {
 	}
 
 	// Check agent reservations
-	agentRes, err := st.AgentReservations("agent-1")
+	agentRes, err := st.AgentReservations(ctx, "agent-1")
 	if err != nil {
 		t.Fatalf("agent reservations: %v", err)
 	}
@@ -309,25 +320,26 @@ func TestFileReservation(t *testing.T) {
 	}
 
 	// Release the reservation
-	if err := st.ReleaseReservation(res.ID, "agent-1"); err != nil {
+	if err := st.ReleaseReservation(ctx, res.ID, "agent-1"); err != nil {
 		t.Fatalf("release: %v", err)
 	}
 
 	// Verify it's no longer active
-	active, _ = st.ActiveReservations("autarch")
+	active, _ = st.ActiveReservations(ctx, "autarch")
 	if len(active) != 0 {
 		t.Errorf("expected 0 active reservations after release, got %d", len(active))
 	}
 
-	if _, err := st.GetReservation("does-not-exist"); err == nil {
+	if _, err := st.GetReservation(ctx, "does-not-exist"); err == nil {
 		t.Fatal("expected get reservation to fail for missing id")
 	}
 }
 
 func TestFileReservationOverlapSubsetAndSuperset(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
-	_, err := st.Reserve(core.Reservation{
+	_, err := st.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-1",
 		Project:     "autarch",
 		PathPattern: "pkg/events/*.go",
@@ -337,7 +349,7 @@ func TestFileReservationOverlapSubsetAndSuperset(t *testing.T) {
 		t.Fatalf("seed reserve: %v", err)
 	}
 
-	_, err = st.Reserve(core.Reservation{
+	_, err = st.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-2",
 		Project:     "autarch",
 		PathPattern: "pkg/events/reconcile.go",
@@ -348,7 +360,7 @@ func TestFileReservationOverlapSubsetAndSuperset(t *testing.T) {
 	}
 
 	st2 := NewSQLiteTest(t)
-	_, err = st2.Reserve(core.Reservation{
+	_, err = st2.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-1",
 		Project:     "autarch",
 		PathPattern: "pkg/events/reconcile.go",
@@ -357,7 +369,7 @@ func TestFileReservationOverlapSubsetAndSuperset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed literal reserve: %v", err)
 	}
-	_, err = st2.Reserve(core.Reservation{
+	_, err = st2.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-2",
 		Project:     "autarch",
 		PathPattern: "pkg/events/*.go",
@@ -369,9 +381,10 @@ func TestFileReservationOverlapSubsetAndSuperset(t *testing.T) {
 }
 
 func TestFileReservationOverlapPartial(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
-	_, err := st.Reserve(core.Reservation{
+	_, err := st.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-1",
 		Project:     "autarch",
 		PathPattern: "pkg/*/reconcile.go",
@@ -381,7 +394,7 @@ func TestFileReservationOverlapPartial(t *testing.T) {
 		t.Fatalf("seed reserve: %v", err)
 	}
 
-	_, err = st.Reserve(core.Reservation{
+	_, err = st.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-2",
 		Project:     "autarch",
 		PathPattern: "pkg/events/*.go",
@@ -393,9 +406,10 @@ func TestFileReservationOverlapPartial(t *testing.T) {
 }
 
 func TestFileReservationSharedOverlapSemantics(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
-	_, err := st.Reserve(core.Reservation{
+	_, err := st.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-1",
 		Project:     "autarch",
 		PathPattern: "pkg/events/*.go",
@@ -405,7 +419,7 @@ func TestFileReservationSharedOverlapSemantics(t *testing.T) {
 		t.Fatalf("seed shared reserve: %v", err)
 	}
 
-	_, err = st.Reserve(core.Reservation{
+	_, err = st.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-2",
 		Project:     "autarch",
 		PathPattern: "pkg/events/reconcile.go",
@@ -415,7 +429,7 @@ func TestFileReservationSharedOverlapSemantics(t *testing.T) {
 		t.Fatalf("shared/shared overlap should be allowed: %v", err)
 	}
 
-	_, err = st.Reserve(core.Reservation{
+	_, err = st.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-3",
 		Project:     "autarch",
 		PathPattern: "pkg/events/reconcile.go",
@@ -427,11 +441,12 @@ func TestFileReservationSharedOverlapSemantics(t *testing.T) {
 }
 
 func TestInboxCounts(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Send 3 messages to bob
 	for i := 1; i <= 3; i++ {
-		_, err := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{
+		_, err := st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: core.Message{
 			ID:      fmt.Sprintf("m%d", i),
 			Project: "proj",
 			From:    "alice",
@@ -444,7 +459,7 @@ func TestInboxCounts(t *testing.T) {
 	}
 
 	// Check counts before reading
-	total, unread, err := st.InboxCounts("proj", "bob")
+	total, unread, err := st.InboxCounts(ctx, "proj", "bob")
 	if err != nil {
 		t.Fatalf("inbox counts: %v", err)
 	}
@@ -456,12 +471,12 @@ func TestInboxCounts(t *testing.T) {
 	}
 
 	// Mark one as read
-	if err := st.MarkRead("proj", "m1", "bob"); err != nil {
+	if err := st.MarkRead(ctx, "proj", "m1", "bob"); err != nil {
 		t.Fatalf("mark read: %v", err)
 	}
 
 	// Check counts after reading
-	total, unread, err = st.InboxCounts("proj", "bob")
+	total, unread, err = st.InboxCounts(ctx, "proj", "bob")
 	if err != nil {
 		t.Fatalf("inbox counts: %v", err)
 	}
@@ -474,10 +489,11 @@ func TestInboxCounts(t *testing.T) {
 }
 
 func TestReservationExpiry(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Reserve with very short TTL (already expired)
-	_, err := st.Reserve(core.Reservation{
+	_, err := st.Reserve(ctx, core.Reservation{
 		AgentID:     "agent-1",
 		Project:     "autarch",
 		PathPattern: "*.go",
@@ -488,13 +504,14 @@ func TestReservationExpiry(t *testing.T) {
 	}
 
 	// Should not appear in active reservations
-	active, _ := st.ActiveReservations("autarch")
+	active, _ := st.ActiveReservations(ctx, "autarch")
 	if len(active) != 0 {
 		t.Errorf("expected 0 active reservations (expired), got %d", len(active))
 	}
 }
 
 func TestRecipientTracking(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Send message to multiple recipients
@@ -507,18 +524,18 @@ func TestRecipientTracking(t *testing.T) {
 		Subject: "Meeting",
 		Body:    "Let's meet",
 	}
-	_, err := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: msg})
+	_, err := st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: msg})
 	if err != nil {
 		t.Fatalf("append event: %v", err)
 	}
 
 	// Mark read for one recipient
-	if err := st.MarkRead("proj", "m1", "bob"); err != nil {
+	if err := st.MarkRead(ctx, "proj", "m1", "bob"); err != nil {
 		t.Fatalf("mark read: %v", err)
 	}
 
 	// Check status
-	status, err := st.RecipientStatus("proj", "m1")
+	status, err := st.RecipientStatus(ctx, "proj", "m1")
 	if err != nil {
 		t.Fatalf("recipient status: %v", err)
 	}
@@ -545,17 +562,18 @@ func TestRecipientTracking(t *testing.T) {
 	}
 
 	// Mark ack for bob
-	if err := st.MarkAck("proj", "m1", "bob"); err != nil {
+	if err := st.MarkAck(ctx, "proj", "m1", "bob"); err != nil {
 		t.Fatalf("mark ack: %v", err)
 	}
 
-	status, _ = st.RecipientStatus("proj", "m1")
+	status, _ = st.RecipientStatus(ctx, "proj", "m1")
 	if status["bob"].AckAt == nil {
 		t.Error("bob should be marked ack'd")
 	}
 }
 
 func TestMessageWithMetadata(t *testing.T) {
+	ctx := context.Background()
 	st := NewSQLiteTest(t)
 
 	// Create a message with subject, CC, and BCC
@@ -571,13 +589,13 @@ func TestMessageWithMetadata(t *testing.T) {
 		Importance:  "high",
 		AckRequired: true,
 	}
-	_, err := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: msg})
+	_, err := st.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Message: msg})
 	if err != nil {
 		t.Fatalf("append event: %v", err)
 	}
 
 	// Fetch from inbox and verify metadata is preserved
-	msgs, err := st.InboxSince("proj", "bob", 0, 0)
+	msgs, err := st.InboxSince(ctx, "proj", "bob", 0, 0)
 	if err != nil {
 		t.Fatalf("inbox: %v", err)
 	}
@@ -602,6 +620,7 @@ func TestMessageWithMetadata(t *testing.T) {
 }
 
 func TestSQLiteThreadBackfillIncludesSender(t *testing.T) {
+	ctx := context.Background()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "intermute.db")
 
@@ -643,7 +662,7 @@ func TestSQLiteThreadBackfillIncludesSender(t *testing.T) {
 	}
 	defer st.db.Close()
 
-	threadsBob, err := st.ListThreads("proj", "bob", 0, 10)
+	threadsBob, err := st.ListThreads(ctx, "proj", "bob", 0, 10)
 	if err != nil {
 		t.Fatalf("list threads for bob: %v", err)
 	}
@@ -651,7 +670,7 @@ func TestSQLiteThreadBackfillIncludesSender(t *testing.T) {
 		t.Fatalf("expected bob to see 1 thread, got %d", len(threadsBob))
 	}
 
-	threadsAlice, err := st.ListThreads("proj", "alice", 0, 10)
+	threadsAlice, err := st.ListThreads(ctx, "proj", "alice", 0, 10)
 	if err != nil {
 		t.Fatalf("list threads for alice: %v", err)
 	}

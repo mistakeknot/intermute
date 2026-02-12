@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -20,25 +21,25 @@ type ThreadSummary struct {
 }
 
 type Store interface {
-	AppendEvent(Event) (uint64, error)
-	InboxSince(project, agent string, cursor uint64, limit int) ([]core.Message, error)
-	ThreadMessages(project, threadID string, cursor uint64) ([]core.Message, error)
-	ListThreads(project, agent string, cursor uint64, limit int) ([]ThreadSummary, error)
-	RegisterAgent(agent core.Agent) (core.Agent, error)
-	Heartbeat(project, agentID string) (core.Agent, error)
-	ListAgents(project string) ([]core.Agent, error)
+	AppendEvent(ctx context.Context, ev Event) (uint64, error)
+	InboxSince(ctx context.Context, project, agent string, cursor uint64, limit int) ([]core.Message, error)
+	ThreadMessages(ctx context.Context, project, threadID string, cursor uint64) ([]core.Message, error)
+	ListThreads(ctx context.Context, project, agent string, cursor uint64, limit int) ([]ThreadSummary, error)
+	RegisterAgent(ctx context.Context, agent core.Agent) (core.Agent, error)
+	Heartbeat(ctx context.Context, project, agentID string) (core.Agent, error)
+	ListAgents(ctx context.Context, project string) ([]core.Agent, error)
 	// Per-recipient tracking
-	MarkRead(project, messageID, agentID string) error
-	MarkAck(project, messageID, agentID string) error
-	RecipientStatus(project, messageID string) (map[string]*core.RecipientStatus, error)
+	MarkRead(ctx context.Context, project, messageID, agentID string) error
+	MarkAck(ctx context.Context, project, messageID, agentID string) error
+	RecipientStatus(ctx context.Context, project, messageID string) (map[string]*core.RecipientStatus, error)
 	// Inbox counts
-	InboxCounts(project, agentID string) (total int, unread int, err error)
+	InboxCounts(ctx context.Context, project, agentID string) (total int, unread int, err error)
 	// File reservations
-	Reserve(r core.Reservation) (*core.Reservation, error)
-	GetReservation(id string) (*core.Reservation, error)
-	ReleaseReservation(id, agentID string) error
-	ActiveReservations(project string) ([]core.Reservation, error)
-	AgentReservations(agentID string) ([]core.Reservation, error)
+	Reserve(ctx context.Context, r core.Reservation) (*core.Reservation, error)
+	GetReservation(ctx context.Context, id string) (*core.Reservation, error)
+	ReleaseReservation(ctx context.Context, id, agentID string) error
+	ActiveReservations(ctx context.Context, project string) ([]core.Reservation, error)
+	AgentReservations(ctx context.Context, agentID string) ([]core.Reservation, error)
 }
 
 // InMemory is a minimal in-memory store for tests.
@@ -59,7 +60,7 @@ func NewInMemory() *InMemory {
 	}
 }
 
-func (m *InMemory) AppendEvent(ev Event) (uint64, error) {
+func (m *InMemory) AppendEvent(_ context.Context, ev Event) (uint64, error) {
 	m.cursor++
 	if ev.Type != core.EventMessageCreated {
 		return m.cursor, nil
@@ -101,7 +102,7 @@ func (m *InMemory) AppendEvent(ev Event) (uint64, error) {
 	return m.cursor, nil
 }
 
-func (m *InMemory) InboxSince(project, agent string, cursor uint64, limit int) ([]core.Message, error) {
+func (m *InMemory) InboxSince(_ context.Context, project, agent string, cursor uint64, limit int) ([]core.Message, error) {
 	collect := func(msgs []core.Message) []core.Message {
 		out := make([]core.Message, 0, len(msgs))
 		for _, msg := range msgs {
@@ -125,7 +126,7 @@ func (m *InMemory) InboxSince(project, agent string, cursor uint64, limit int) (
 	return out, nil
 }
 
-func (m *InMemory) ThreadMessages(project, threadID string, cursor uint64) ([]core.Message, error) {
+func (m *InMemory) ThreadMessages(_ context.Context, project, threadID string, cursor uint64) ([]core.Message, error) {
 	var out []core.Message
 	projectMsgs := m.messages[project]
 	if projectMsgs == nil {
@@ -147,7 +148,7 @@ func (m *InMemory) ThreadMessages(project, threadID string, cursor uint64) ([]co
 	return out, nil
 }
 
-func (m *InMemory) ListThreads(project, agent string, cursor uint64, limit int) ([]ThreadSummary, error) {
+func (m *InMemory) ListThreads(_ context.Context, project, agent string, cursor uint64, limit int) ([]ThreadSummary, error) {
 	var out []ThreadSummary
 	projectThreads := m.threadIndex[project]
 	if projectThreads == nil {
@@ -192,7 +193,7 @@ func (m *InMemory) ListThreads(project, agent string, cursor uint64, limit int) 
 	return out, nil
 }
 
-func (m *InMemory) RegisterAgent(agent core.Agent) (core.Agent, error) {
+func (m *InMemory) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, error) {
 	if agent.ID == "" {
 		agent.ID = agent.Name
 	}
@@ -203,7 +204,7 @@ func (m *InMemory) RegisterAgent(agent core.Agent) (core.Agent, error) {
 	return agent, nil
 }
 
-func (m *InMemory) Heartbeat(project, agentID string) (core.Agent, error) {
+func (m *InMemory) Heartbeat(_ context.Context, project, agentID string) (core.Agent, error) {
 	agent, ok := m.agents[agentID]
 	if !ok {
 		return core.Agent{}, fmt.Errorf("agent not found")
@@ -216,7 +217,7 @@ func (m *InMemory) Heartbeat(project, agentID string) (core.Agent, error) {
 	return agent, nil
 }
 
-func (m *InMemory) ListAgents(project string) ([]core.Agent, error) {
+func (m *InMemory) ListAgents(_ context.Context, project string) ([]core.Agent, error) {
 	var out []core.Agent
 	for _, agent := range m.agents {
 		if project == "" || agent.Project == project {
@@ -227,47 +228,47 @@ func (m *InMemory) ListAgents(project string) ([]core.Agent, error) {
 }
 
 // MarkRead marks a message as read by a specific recipient (stub for in-memory store)
-func (m *InMemory) MarkRead(project, messageID, agentID string) error {
+func (m *InMemory) MarkRead(_ context.Context, project, messageID, agentID string) error {
 	return nil // In-memory store doesn't track per-recipient status
 }
 
 // MarkAck marks a message as acknowledged by a specific recipient (stub for in-memory store)
-func (m *InMemory) MarkAck(project, messageID, agentID string) error {
+func (m *InMemory) MarkAck(_ context.Context, project, messageID, agentID string) error {
 	return nil // In-memory store doesn't track per-recipient status
 }
 
 // RecipientStatus returns the read/ack status for all recipients (stub for in-memory store)
-func (m *InMemory) RecipientStatus(project, messageID string) (map[string]*core.RecipientStatus, error) {
+func (m *InMemory) RecipientStatus(_ context.Context, project, messageID string) (map[string]*core.RecipientStatus, error) {
 	return make(map[string]*core.RecipientStatus), nil // In-memory store doesn't track per-recipient status
 }
 
 // InboxCounts returns total and unread counts (stub for in-memory store)
-func (m *InMemory) InboxCounts(project, agentID string) (int, int, error) {
+func (m *InMemory) InboxCounts(_ context.Context, project, agentID string) (int, int, error) {
 	msgs := m.inbox[project][agentID]
 	return len(msgs), len(msgs), nil // In-memory doesn't track read status, so all are "unread"
 }
 
 // Reserve creates a file reservation (stub for in-memory store)
-func (m *InMemory) Reserve(r core.Reservation) (*core.Reservation, error) {
+func (m *InMemory) Reserve(_ context.Context, r core.Reservation) (*core.Reservation, error) {
 	return &r, nil // In-memory store doesn't track reservations
 }
 
 // GetReservation returns a reservation by ID (stub for in-memory store)
-func (m *InMemory) GetReservation(id string) (*core.Reservation, error) {
+func (m *InMemory) GetReservation(_ context.Context, id string) (*core.Reservation, error) {
 	return nil, core.ErrNotFound
 }
 
 // ReleaseReservation releases a file reservation (stub for in-memory store)
-func (m *InMemory) ReleaseReservation(id, agentID string) error {
+func (m *InMemory) ReleaseReservation(_ context.Context, id, agentID string) error {
 	return nil // In-memory store doesn't track reservations
 }
 
 // ActiveReservations returns active reservations (stub for in-memory store)
-func (m *InMemory) ActiveReservations(project string) ([]core.Reservation, error) {
+func (m *InMemory) ActiveReservations(_ context.Context, project string) ([]core.Reservation, error) {
 	return nil, nil // In-memory store doesn't track reservations
 }
 
 // AgentReservations returns an agent's reservations (stub for in-memory store)
-func (m *InMemory) AgentReservations(agentID string) ([]core.Reservation, error) {
+func (m *InMemory) AgentReservations(_ context.Context, agentID string) ([]core.Reservation, error) {
 	return nil, nil // In-memory store doesn't track reservations
 }

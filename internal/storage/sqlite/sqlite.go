@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mistakeknot/intermute/internal/core"
+	"github.com/mistakeknot/intermute/internal/glob"
 	"github.com/mistakeknot/intermute/internal/storage"
 )
 
@@ -24,7 +24,7 @@ import (
 var schema string
 
 type Store struct {
-	db *sql.DB
+	db dbHandle
 }
 
 func New(path string) (*Store, error) {
@@ -41,7 +41,7 @@ func New(path string) (*Store, error) {
 	if err := applySchema(db); err != nil {
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	return &Store{db: &queryLogger{inner: db}}, nil
 }
 
 func NewInMemory() (*Store, error) {
@@ -52,7 +52,7 @@ func NewInMemory() (*Store, error) {
 	if err := applySchema(db); err != nil {
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	return &Store{db: &queryLogger{inner: db}}, nil
 }
 
 func applySchema(db *sql.DB) error {
@@ -77,7 +77,7 @@ func applySchema(db *sql.DB) error {
 	return nil
 }
 
-func (s *Store) AppendEvent(ev core.Event) (uint64, error) {
+func (s *Store) AppendEvent(_ context.Context, ev core.Event) (uint64, error) {
 	if ev.ID == "" {
 		ev.ID = uuid.NewString()
 	}
@@ -146,14 +146,23 @@ func (s *Store) AppendEvent(ev core.Event) (uint64, error) {
 		// Update thread_index if message has a thread ID
 		if ev.Message.ThreadID != "" {
 			participants := append([]string{ev.Message.From}, recipients...)
+			lastBody := ev.Message.Body
+			if len(lastBody) > 200 {
+				lastBody = lastBody[:200]
+			}
 			for _, agent := range participants {
 				if _, err := tx.Exec(
-					`INSERT INTO thread_index (project, thread_id, agent, last_cursor, message_count)
-					 VALUES (?, ?, ?, ?, 1)
+					`INSERT INTO thread_index (project, thread_id, agent, last_cursor, message_count,
+					   last_message_from, last_message_body, last_message_at)
+					 VALUES (?, ?, ?, ?, 1, ?, ?, ?)
 					 ON CONFLICT(project, thread_id, agent) DO UPDATE SET
 					   last_cursor = excluded.last_cursor,
-					   message_count = thread_index.message_count + 1`,
+					   message_count = thread_index.message_count + 1,
+					   last_message_from = excluded.last_message_from,
+					   last_message_body = excluded.last_message_body,
+					   last_message_at = excluded.last_message_at`,
 					project, ev.Message.ThreadID, agent, cursor,
+					ev.Message.From, lastBody, ev.CreatedAt.Format(time.RFC3339Nano),
 				); err != nil {
 					return 0, fmt.Errorf("upsert thread_index: %w", err)
 				}
@@ -201,7 +210,7 @@ func (s *Store) upsertMessageTx(tx *sql.Tx, project string, msg core.Message) er
 	return nil
 }
 
-func (s *Store) InboxSince(project, agent string, cursor uint64, limit int) ([]core.Message, error) {
+func (s *Store) InboxSince(_ context.Context, project, agent string, cursor uint64, limit int) ([]core.Message, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -272,7 +281,7 @@ func (s *Store) InboxSince(project, agent string, cursor uint64, limit int) ([]c
 	return out, nil
 }
 
-func (s *Store) ThreadMessages(project, threadID string, cursor uint64) ([]core.Message, error) {
+func (s *Store) ThreadMessages(_ context.Context, project, threadID string, cursor uint64) ([]core.Message, error) {
 	query := `SELECT MAX(i.cursor) AS cursor, m.project, m.message_id, m.thread_id, m.from_agent, m.to_json,
 		COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
 		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), m.created_at
@@ -332,26 +341,22 @@ func (s *Store) ThreadMessages(project, threadID string, cursor uint64) ([]core.
 	return out, nil
 }
 
-func (s *Store) ListThreads(project, agent string, cursor uint64, limit int) ([]storage.ThreadSummary, error) {
+func (s *Store) ListThreads(_ context.Context, project, agent string, cursor uint64, limit int) ([]storage.ThreadSummary, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	query := `SELECT t.thread_id, t.last_cursor, t.message_count, m.from_agent, m.body, m.created_at
-	 FROM thread_index t
-	 JOIN messages m ON m.project = t.project AND m.thread_id = t.thread_id
-	 WHERE t.project = ? AND t.agent = ?`
+	query := `SELECT thread_id, last_cursor, message_count,
+	   last_message_from, last_message_body, last_message_at
+	 FROM thread_index
+	 WHERE project = ? AND agent = ?`
 	args := []any{project, agent}
 	// With DESC ordering, cursor represents an upper bound for older pages.
 	if cursor > 0 {
-		query += " AND t.last_cursor < ?"
+		query += " AND last_cursor < ?"
 		args = append(args, cursor)
 	}
 	query += `
-	 AND m.created_at = (
-	   SELECT MAX(m2.created_at) FROM messages m2
-	   WHERE m2.project = t.project AND m2.thread_id = t.thread_id
-	 )
-	 ORDER BY t.last_cursor DESC
+	 ORDER BY last_cursor DESC
 	 LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.Query(query, args...)
@@ -489,20 +494,36 @@ func migrateThreadIndex(db *sql.DB) error {
 	// Backfill from messages that have thread_id
 	_, err := db.Exec(`
 		WITH participants AS (
-			SELECT m.project, m.thread_id, i.agent AS agent, i.cursor AS cursor, m.message_id
+			SELECT m.project, m.thread_id, i.agent AS agent, i.cursor AS cursor, m.message_id,
+			       m.from_agent AS msg_from, SUBSTR(m.body, 1, 200) AS msg_body, m.created_at AS msg_at
 			FROM messages m
 			JOIN inbox_index i ON i.project = m.project AND i.message_id = m.message_id
 			WHERE m.thread_id IS NOT NULL AND m.thread_id != ''
 			UNION ALL
-			SELECT m.project, m.thread_id, m.from_agent AS agent, e.cursor AS cursor, m.message_id
+			SELECT m.project, m.thread_id, m.from_agent AS agent, e.cursor AS cursor, m.message_id,
+			       m.from_agent AS msg_from, SUBSTR(m.body, 1, 200) AS msg_body, m.created_at AS msg_at
 			FROM messages m
 			JOIN events e ON e.project = m.project AND e.message_id = m.message_id AND e.type = ?
 			WHERE m.thread_id IS NOT NULL AND m.thread_id != '' AND m.from_agent IS NOT NULL AND m.from_agent != ''
+		),
+		latest AS (
+			SELECT project, thread_id, agent, MAX(cursor) AS last_cursor,
+			       COUNT(DISTINCT message_id) AS message_count
+			FROM participants
+			GROUP BY project, thread_id, agent
+		),
+		last_msg AS (
+			SELECT p.project, p.thread_id, p.agent, p.msg_from, p.msg_body, p.msg_at,
+			       ROW_NUMBER() OVER (PARTITION BY p.project, p.thread_id, p.agent ORDER BY p.msg_at DESC) AS rn
+			FROM participants p
 		)
-		INSERT INTO thread_index (project, thread_id, agent, last_cursor, message_count)
-		SELECT project, thread_id, agent, MAX(cursor), COUNT(DISTINCT message_id)
-		FROM participants
-		GROUP BY project, thread_id, agent
+		INSERT INTO thread_index (project, thread_id, agent, last_cursor, message_count,
+		   last_message_from, last_message_body, last_message_at)
+		SELECT l.project, l.thread_id, l.agent, l.last_cursor, l.message_count,
+		       COALESCE(lm.msg_from, ''), COALESCE(lm.msg_body, ''), COALESCE(lm.msg_at, '')
+		FROM latest l
+		LEFT JOIN last_msg lm ON lm.project = l.project AND lm.thread_id = l.thread_id
+		   AND lm.agent = l.agent AND lm.rn = 1
 	`, string(core.EventMessageCreated))
 	if err != nil {
 		return fmt.Errorf("backfill thread_index: %w", err)
@@ -570,7 +591,7 @@ func tableHasCompositePK(db *sql.DB, table string) bool {
 	return hasProjectPK && hasMessagePK
 }
 
-func (s *Store) RegisterAgent(agent core.Agent) (core.Agent, error) {
+func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, error) {
 	if agent.ID == "" {
 		agent.ID = uuid.NewString()
 	}
@@ -607,7 +628,7 @@ func (s *Store) RegisterAgent(agent core.Agent) (core.Agent, error) {
 	return agent, nil
 }
 
-func (s *Store) Heartbeat(project, agentID string) (core.Agent, error) {
+func (s *Store) Heartbeat(_ context.Context, project, agentID string) (core.Agent, error) {
 	now := time.Now().UTC()
 	var query string
 	var args []any
@@ -658,7 +679,7 @@ func (s *Store) Heartbeat(project, agentID string) (core.Agent, error) {
 	}, nil
 }
 
-func (s *Store) ListAgents(project string) ([]core.Agent, error) {
+func (s *Store) ListAgents(_ context.Context, project string) ([]core.Agent, error) {
 	query := `SELECT id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen
 		FROM agents`
 	var args []any
@@ -757,7 +778,7 @@ func (s *Store) insertRecipientsTx(tx *sql.Tx, project, messageID string, agents
 }
 
 // MarkRead marks a message as read by a specific recipient
-func (s *Store) MarkRead(project, messageID, agentID string) error {
+func (s *Store) MarkRead(_ context.Context, project, messageID, agentID string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := s.db.Exec(
 		`UPDATE message_recipients SET read_at = ? WHERE project = ? AND message_id = ? AND agent_id = ? AND read_at IS NULL`,
@@ -780,7 +801,7 @@ func (s *Store) MarkRead(project, messageID, agentID string) error {
 }
 
 // MarkAck marks a message as acknowledged by a specific recipient
-func (s *Store) MarkAck(project, messageID, agentID string) error {
+func (s *Store) MarkAck(_ context.Context, project, messageID, agentID string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := s.db.Exec(
 		`UPDATE message_recipients SET ack_at = ? WHERE project = ? AND message_id = ? AND agent_id = ? AND ack_at IS NULL`,
@@ -802,7 +823,7 @@ func (s *Store) MarkAck(project, messageID, agentID string) error {
 }
 
 // RecipientStatus returns the read/ack status for all recipients of a message
-func (s *Store) RecipientStatus(project, messageID string) (map[string]*core.RecipientStatus, error) {
+func (s *Store) RecipientStatus(_ context.Context, project, messageID string) (map[string]*core.RecipientStatus, error) {
 	rows, err := s.db.Query(
 		`SELECT agent_id, kind, read_at, ack_at FROM message_recipients WHERE project = ? AND message_id = ?`,
 		project, messageID,
@@ -841,23 +862,28 @@ func (s *Store) RecipientStatus(project, messageID string) (map[string]*core.Rec
 	return result, nil
 }
 
-// InboxCounts returns the total and unread message counts for an agent
-func (s *Store) InboxCounts(project, agentID string) (total int, unread int, err error) {
+// InboxCounts returns the total and unread message counts for an agent.
+// Both counts are read within a single transaction for snapshot consistency.
+func (s *Store) InboxCounts(_ context.Context, project, agentID string) (total int, unread int, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, 0, fmt.Errorf("begin inbox counts: %w", err)
+	}
+	defer tx.Rollback()
+
 	// Total count from inbox_index
-	row := s.db.QueryRow(
+	if err := tx.QueryRow(
 		`SELECT COUNT(*) FROM inbox_index WHERE project = ? AND agent = ?`,
 		project, agentID,
-	)
-	if err := row.Scan(&total); err != nil {
+	).Scan(&total); err != nil {
 		return 0, 0, fmt.Errorf("count total: %w", err)
 	}
 
 	// Unread count from message_recipients (where read_at IS NULL)
-	row = s.db.QueryRow(
+	if err := tx.QueryRow(
 		`SELECT COUNT(*) FROM message_recipients WHERE project = ? AND agent_id = ? AND read_at IS NULL`,
 		project, agentID,
-	)
-	if err := row.Scan(&unread); err != nil {
+	).Scan(&unread); err != nil {
 		return 0, 0, fmt.Errorf("count unread: %w", err)
 	}
 
@@ -865,7 +891,7 @@ func (s *Store) InboxCounts(project, agentID string) (total int, unread int, err
 }
 
 // Reserve creates a new file reservation
-func (s *Store) Reserve(r core.Reservation) (*core.Reservation, error) {
+func (s *Store) Reserve(_ context.Context, r core.Reservation) (*core.Reservation, error) {
 	if r.ID == "" {
 		r.ID = uuid.NewString()
 	}
@@ -876,8 +902,13 @@ func (s *Store) Reserve(r core.Reservation) (*core.Reservation, error) {
 	}
 	r.ExpiresAt = now.Add(r.TTL) // Negative TTL will create already-expired reservation
 
+	// Validate pattern complexity to prevent NFA state explosion.
+	if err := glob.ValidateComplexity(r.PathPattern); err != nil {
+		return nil, fmt.Errorf("invalid reservation pattern %q: %w", r.PathPattern, err)
+	}
+
 	// Validate the incoming pattern early so callers get deterministic failures.
-	if _, err := globPatternsOverlap(r.PathPattern, r.PathPattern); err != nil {
+	if _, err := glob.PatternsOverlap(r.PathPattern, r.PathPattern); err != nil {
 		return nil, fmt.Errorf("invalid reservation pattern %q: %w", r.PathPattern, err)
 	}
 
@@ -918,7 +949,7 @@ func (s *Store) Reserve(r core.Reservation) (*core.Reservation, error) {
 		if !r.Exclusive && existingExcl == 0 {
 			continue
 		}
-		overlap, err := globPatternsOverlap(r.PathPattern, existingPattern)
+		overlap, err := glob.PatternsOverlap(r.PathPattern, existingPattern)
 		if err != nil {
 			return nil, fmt.Errorf("check reservation overlap against %q: %w", existingPattern, err)
 		}
@@ -950,7 +981,7 @@ func (s *Store) Reserve(r core.Reservation) (*core.Reservation, error) {
 }
 
 // GetReservation returns a reservation by ID
-func (s *Store) GetReservation(id string) (*core.Reservation, error) {
+func (s *Store) GetReservation(_ context.Context, id string) (*core.Reservation, error) {
 	var (
 		res                  core.Reservation
 		exclusive            int
@@ -983,7 +1014,7 @@ func (s *Store) GetReservation(id string) (*core.Reservation, error) {
 }
 
 // ReleaseReservation marks a reservation as released, enforcing agent ownership atomically
-func (s *Store) ReleaseReservation(id, agentID string) error {
+func (s *Store) ReleaseReservation(_ context.Context, id, agentID string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := s.db.Exec(
 		`UPDATE file_reservations SET released_at = ? WHERE id = ? AND agent_id = ? AND released_at IS NULL`,
@@ -1000,7 +1031,7 @@ func (s *Store) ReleaseReservation(id, agentID string) error {
 }
 
 // ActiveReservations returns all non-expired, non-released reservations for a project
-func (s *Store) ActiveReservations(project string) ([]core.Reservation, error) {
+func (s *Store) ActiveReservations(_ context.Context, project string) ([]core.Reservation, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	rows, err := s.db.Query(
 		`SELECT id, agent_id, project, path_pattern, exclusive, reason, created_at, expires_at
@@ -1018,7 +1049,7 @@ func (s *Store) ActiveReservations(project string) ([]core.Reservation, error) {
 }
 
 // AgentReservations returns all reservations held by an agent (including expired but not released)
-func (s *Store) AgentReservations(agentID string) ([]core.Reservation, error) {
+func (s *Store) AgentReservations(_ context.Context, agentID string) ([]core.Reservation, error) {
 	rows, err := s.db.Query(
 		`SELECT id, agent_id, project, path_pattern, exclusive, reason, created_at, expires_at, released_at
 		 FROM file_reservations
@@ -1098,344 +1129,6 @@ func (s *Store) scanReservationsWithRelease(rows *sql.Rows) ([]core.Reservation,
 		return nil, fmt.Errorf("rows: %w", err)
 	}
 	return out, nil
-}
-
-type globTokenKind int
-
-const (
-	globTokenLiteral globTokenKind = iota
-	globTokenAny
-	globTokenStar
-	globTokenClass
-)
-
-type runeRange struct {
-	lo rune
-	hi rune
-}
-
-type globToken struct {
-	kind   globTokenKind
-	lit    rune
-	ranges []runeRange
-}
-
-const maxRune = rune(0x10FFFF)
-
-var nonSeparatorRanges = []runeRange{
-	{lo: 0, hi: '/' - 1},
-	{lo: '/' + 1, hi: maxRune},
-}
-
-func globPatternsOverlap(a, b string) (bool, error) {
-	a = filepath.ToSlash(a)
-	b = filepath.ToSlash(b)
-
-	segmentsA := strings.Split(a, "/")
-	segmentsB := strings.Split(b, "/")
-	if len(segmentsA) != len(segmentsB) {
-		return false, nil
-	}
-
-	for i := range segmentsA {
-		overlap, err := segmentPatternsOverlap(segmentsA[i], segmentsB[i])
-		if err != nil {
-			return false, err
-		}
-		if !overlap {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-func segmentPatternsOverlap(a, b string) (bool, error) {
-	tokensA, err := parseGlobSegment(a)
-	if err != nil {
-		return false, err
-	}
-	tokensB, err := parseGlobSegment(b)
-	if err != nil {
-		return false, err
-	}
-
-	type state struct {
-		i int
-		j int
-	}
-
-	addClosure := func(initial state, seen map[state]struct{}, queue *[]state) {
-		stack := []state{initial}
-		for len(stack) > 0 {
-			curr := stack[len(stack)-1]
-			stack = stack[:len(stack)-1]
-			if _, ok := seen[curr]; ok {
-				continue
-			}
-			seen[curr] = struct{}{}
-			*queue = append(*queue, curr)
-			if curr.i < len(tokensA) && tokensA[curr.i].kind == globTokenStar {
-				stack = append(stack, state{i: curr.i + 1, j: curr.j})
-			}
-			if curr.j < len(tokensB) && tokensB[curr.j].kind == globTokenStar {
-				stack = append(stack, state{i: curr.i, j: curr.j + 1})
-			}
-		}
-	}
-
-	seen := make(map[state]struct{})
-	queue := make([]state, 0, (len(tokensA)+1)*(len(tokensB)+1))
-	addClosure(state{i: 0, j: 0}, seen, &queue)
-
-	for idx := 0; idx < len(queue); idx++ {
-		curr := queue[idx]
-		if curr.i == len(tokensA) && curr.j == len(tokensB) {
-			return true, nil
-		}
-		if curr.i == len(tokensA) || curr.j == len(tokensB) {
-			continue
-		}
-
-		aNext, aRanges := tokenConsume(tokensA, curr.i)
-		bNext, bRanges := tokenConsume(tokensB, curr.j)
-		if !rangesOverlap(aRanges, bRanges) {
-			continue
-		}
-
-		addClosure(state{i: aNext, j: bNext}, seen, &queue)
-	}
-
-	return false, nil
-}
-
-func tokenConsume(tokens []globToken, idx int) (next int, ranges []runeRange) {
-	tok := tokens[idx]
-	if tok.kind == globTokenStar {
-		return idx, nonSeparatorRanges
-	}
-	if tok.kind == globTokenLiteral {
-		return idx + 1, []runeRange{{lo: tok.lit, hi: tok.lit}}
-	}
-	return idx + 1, tok.ranges
-}
-
-func parseGlobSegment(segment string) ([]globToken, error) {
-	runes := []rune(segment)
-	tokens := make([]globToken, 0, len(runes))
-
-	for i := 0; i < len(runes); {
-		ch := runes[i]
-		switch ch {
-		case '*':
-			tokens = append(tokens, globToken{kind: globTokenStar})
-			i++
-		case '?':
-			tokens = append(tokens, globToken{kind: globTokenAny, ranges: nonSeparatorRanges})
-			i++
-		case '[':
-			tok, next, err := parseGlobClass(runes, i)
-			if err != nil {
-				return nil, err
-			}
-			tokens = append(tokens, tok)
-			i = next
-		case '\\':
-			if i+1 >= len(runes) {
-				return nil, fmt.Errorf("bad pattern")
-			}
-			tokens = append(tokens, globToken{kind: globTokenLiteral, lit: runes[i+1]})
-			i += 2
-		default:
-			tokens = append(tokens, globToken{kind: globTokenLiteral, lit: ch})
-			i++
-		}
-	}
-
-	return tokens, nil
-}
-
-func parseGlobClass(runes []rune, start int) (globToken, int, error) {
-	i := start + 1
-	if i >= len(runes) {
-		return globToken{}, 0, fmt.Errorf("bad pattern")
-	}
-	negated := false
-	if runes[i] == '^' {
-		negated = true
-		i++
-	}
-
-	var ranges []runeRange
-	hadItem := false
-	closed := false
-
-	for i < len(runes) {
-		if runes[i] == ']' && hadItem {
-			i++
-			closed = true
-			break
-		}
-
-		lo, next, err := readClassRune(runes, i)
-		if err != nil {
-			return globToken{}, 0, err
-		}
-		i = next
-
-		if i+1 < len(runes) && runes[i] == '-' && runes[i+1] != ']' {
-			hi, nextHi, err := readClassRune(runes, i+1)
-			if err != nil {
-				return globToken{}, 0, err
-			}
-			if hi < lo {
-				return globToken{}, 0, fmt.Errorf("bad pattern")
-			}
-			ranges = append(ranges, runeRange{lo: lo, hi: hi})
-			i = nextHi
-			hadItem = true
-			continue
-		}
-
-		ranges = append(ranges, runeRange{lo: lo, hi: lo})
-		hadItem = true
-	}
-
-	if !closed {
-		return globToken{}, 0, fmt.Errorf("bad pattern")
-	}
-
-	ranges = normalizeRanges(ranges)
-	if negated {
-		ranges = subtractRanges(nonSeparatorRanges, ranges)
-	} else {
-		ranges = intersectRanges(ranges, nonSeparatorRanges)
-	}
-
-	return globToken{kind: globTokenClass, ranges: ranges}, i, nil
-}
-
-func readClassRune(runes []rune, idx int) (rune, int, error) {
-	if idx >= len(runes) {
-		return 0, 0, fmt.Errorf("bad pattern")
-	}
-	if runes[idx] != '\\' {
-		return runes[idx], idx + 1, nil
-	}
-	if idx+1 >= len(runes) {
-		return 0, 0, fmt.Errorf("bad pattern")
-	}
-	return runes[idx+1], idx + 2, nil
-}
-
-func rangesOverlap(a, b []runeRange) bool {
-	i, j := 0, 0
-	for i < len(a) && j < len(b) {
-		if a[i].hi < b[j].lo {
-			i++
-			continue
-		}
-		if b[j].hi < a[i].lo {
-			j++
-			continue
-		}
-		return true
-	}
-	return false
-}
-
-func intersectRanges(a, b []runeRange) []runeRange {
-	a = normalizeRanges(a)
-	b = normalizeRanges(b)
-	out := make([]runeRange, 0)
-	i, j := 0, 0
-	for i < len(a) && j < len(b) {
-		lo := maxIntRune(a[i].lo, b[j].lo)
-		hi := minIntRune(a[i].hi, b[j].hi)
-		if lo <= hi {
-			out = append(out, runeRange{lo: lo, hi: hi})
-		}
-		if a[i].hi < b[j].hi {
-			i++
-		} else {
-			j++
-		}
-	}
-	return out
-}
-
-func subtractRanges(base, subtract []runeRange) []runeRange {
-	base = normalizeRanges(base)
-	subtract = normalizeRanges(subtract)
-
-	out := make([]runeRange, 0, len(base))
-	for _, b := range base {
-		current := []runeRange{b}
-		for _, s := range subtract {
-			next := make([]runeRange, 0, len(current)+1)
-			for _, c := range current {
-				if s.hi < c.lo || s.lo > c.hi {
-					next = append(next, c)
-					continue
-				}
-				if s.lo > c.lo {
-					next = append(next, runeRange{lo: c.lo, hi: s.lo - 1})
-				}
-				if s.hi < c.hi {
-					next = append(next, runeRange{lo: s.hi + 1, hi: c.hi})
-				}
-			}
-			current = next
-			if len(current) == 0 {
-				break
-			}
-		}
-		out = append(out, current...)
-	}
-	return out
-}
-
-func normalizeRanges(ranges []runeRange) []runeRange {
-	if len(ranges) <= 1 {
-		return ranges
-	}
-
-	cp := append([]runeRange(nil), ranges...)
-	sort.Slice(cp, func(i, j int) bool {
-		if cp[i].lo == cp[j].lo {
-			return cp[i].hi < cp[j].hi
-		}
-		return cp[i].lo < cp[j].lo
-	})
-
-	out := make([]runeRange, 0, len(cp))
-	current := cp[0]
-	for _, rr := range cp[1:] {
-		if rr.lo <= current.hi+1 {
-			if rr.hi > current.hi {
-				current.hi = rr.hi
-			}
-			continue
-		}
-		out = append(out, current)
-		current = rr
-	}
-	out = append(out, current)
-	return out
-}
-
-func maxIntRune(a, b rune) rune {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func minIntRune(a, b rune) rune {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // migrateDomainVersions adds version columns to domain tables (specs, epics, stories, tasks)
