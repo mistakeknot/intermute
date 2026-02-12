@@ -11,7 +11,7 @@ func TestInboxSinceProjectScoped(t *testing.T) {
 	_, _ = st.AppendEvent(Event{Type: core.EventMessageCreated, Message: core.Message{ID: "m1", Project: "proj-a", From: "x", To: []string{"a"}}})
 	_, _ = st.AppendEvent(Event{Type: core.EventMessageCreated, Message: core.Message{ID: "m2", Project: "proj-b", From: "x", To: []string{"a"}}})
 
-	msgsA, err := st.InboxSince("proj-a", "a", 0)
+	msgsA, err := st.InboxSince("proj-a", "a", 0, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -19,7 +19,7 @@ func TestInboxSinceProjectScoped(t *testing.T) {
 		t.Fatalf("expected only proj-a message, got %+v", msgsA)
 	}
 
-	msgsAll, err := st.InboxSince("", "a", 0)
+	msgsAll, err := st.InboxSince("", "a", 0, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

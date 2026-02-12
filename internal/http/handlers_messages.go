@@ -144,7 +144,13 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 			cursor = parsed
 		}
 	}
-	msgs, err := s.store.InboxSince(project, agent, cursor)
+	var limit int
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	msgs, err := s.store.InboxSince(project, agent, cursor, limit)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

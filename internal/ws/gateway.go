@@ -15,7 +15,7 @@ import (
 const writeTimeout = 5 * time.Second
 
 type Hub struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex
 	conns map[string]map[string]map[*websocket.Conn]struct{}
 }
 
@@ -42,6 +42,10 @@ func (h *Hub) Handler() http.HandlerFunc {
 		} else if project == "" {
 			project = requestedProject
 		}
+		if info.AgentID != "" && info.AgentID != agent {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
@@ -60,43 +64,55 @@ func (h *Hub) Handler() http.HandlerFunc {
 	}
 }
 
+type connEntry struct {
+	conn    *websocket.Conn
+	project string
+	agent   string
+}
+
 func (h *Hub) Broadcast(project, agent string, event any) {
-	conns := h.snapshot(project, agent)
-	if len(conns) == 0 {
+	entries := h.snapshot(project, agent)
+	if len(entries) == 0 {
 		return
 	}
-	for _, conn := range conns {
+	for _, e := range entries {
 		ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
-		_ = wsjson.Write(ctx, conn, event)
+		err := wsjson.Write(ctx, e.conn, event)
 		cancel()
+		if err != nil {
+			go func(e connEntry) {
+				e.conn.Close(websocket.StatusGoingAway, "write error")
+				h.remove(e.project, e.agent, e.conn)
+			}(e)
+		}
 	}
 }
 
-func (h *Hub) snapshot(project, agent string) []*websocket.Conn {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	var out []*websocket.Conn
-	collectAgent := func(m map[string]map[*websocket.Conn]struct{}, target string) {
+func (h *Hub) snapshot(project, agent string) []connEntry {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	var out []connEntry
+	collectAgent := func(proj string, m map[string]map[*websocket.Conn]struct{}, target string) {
 		if target == "" {
-			for _, conns := range m {
+			for agentName, conns := range m {
 				for conn := range conns {
-					out = append(out, conn)
+					out = append(out, connEntry{conn: conn, project: proj, agent: agentName})
 				}
 			}
 			return
 		}
 		for conn := range m[target] {
-			out = append(out, conn)
+			out = append(out, connEntry{conn: conn, project: proj, agent: target})
 		}
 	}
 	if project != "" {
 		if perAgent, ok := h.conns[project]; ok {
-			collectAgent(perAgent, agent)
+			collectAgent(project, perAgent, agent)
 		}
 		return out
 	}
-	for _, perAgent := range h.conns {
-		collectAgent(perAgent, agent)
+	for proj, perAgent := range h.conns {
+		collectAgent(proj, perAgent, agent)
 	}
 	return out
 }

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -59,7 +60,7 @@ func toAPIReservation(r core.Reservation) apiReservation {
 type ReservationStore interface {
 	Reserve(r core.Reservation) (*core.Reservation, error)
 	GetReservation(id string) (*core.Reservation, error)
-	ReleaseReservation(id string) error
+	ReleaseReservation(id, agentID string) error
 	ActiveReservations(project string) ([]core.Reservation, error)
 	AgentReservations(agentID string) ([]core.Reservation, error)
 }
@@ -170,7 +171,7 @@ func (s *Service) listReservations(w http.ResponseWriter, r *http.Request) {
 func (s *Service) releaseReservation(w http.ResponseWriter, r *http.Request, id string) {
 	reservation, err := s.store.GetReservation(id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, core.ErrNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -182,8 +183,8 @@ func (s *Service) releaseReservation(w http.ResponseWriter, r *http.Request, id 
 		w.WriteHeader(http.StatusForbidden)
 		return
 	}
-	if err := s.store.ReleaseReservation(id); err != nil {
-		if strings.Contains(err.Error(), "not found") {
+	if err := s.store.ReleaseReservation(id, info.AgentID); err != nil {
+		if errors.Is(err, core.ErrNotFound) {
 			w.WriteHeader(http.StatusNotFound)
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)

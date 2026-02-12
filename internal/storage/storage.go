@@ -21,7 +21,7 @@ type ThreadSummary struct {
 
 type Store interface {
 	AppendEvent(Event) (uint64, error)
-	InboxSince(project, agent string, cursor uint64) ([]core.Message, error)
+	InboxSince(project, agent string, cursor uint64, limit int) ([]core.Message, error)
 	ThreadMessages(project, threadID string, cursor uint64) ([]core.Message, error)
 	ListThreads(project, agent string, cursor uint64, limit int) ([]ThreadSummary, error)
 	RegisterAgent(agent core.Agent) (core.Agent, error)
@@ -36,7 +36,7 @@ type Store interface {
 	// File reservations
 	Reserve(r core.Reservation) (*core.Reservation, error)
 	GetReservation(id string) (*core.Reservation, error)
-	ReleaseReservation(id string) error
+	ReleaseReservation(id, agentID string) error
 	ActiveReservations(project string) ([]core.Reservation, error)
 	AgentReservations(agentID string) ([]core.Reservation, error)
 }
@@ -101,7 +101,7 @@ func (m *InMemory) AppendEvent(ev Event) (uint64, error) {
 	return m.cursor, nil
 }
 
-func (m *InMemory) InboxSince(project, agent string, cursor uint64) ([]core.Message, error) {
+func (m *InMemory) InboxSince(project, agent string, cursor uint64, limit int) ([]core.Message, error) {
 	collect := func(msgs []core.Message) []core.Message {
 		out := make([]core.Message, 0, len(msgs))
 		for _, msg := range msgs {
@@ -111,12 +111,16 @@ func (m *InMemory) InboxSince(project, agent string, cursor uint64) ([]core.Mess
 		}
 		return out
 	}
-	if project != "" {
-		return collect(m.inbox[project][agent]), nil
-	}
 	var out []core.Message
-	for _, perAgent := range m.inbox {
-		out = append(out, collect(perAgent[agent])...)
+	if project != "" {
+		out = collect(m.inbox[project][agent])
+	} else {
+		for _, perAgent := range m.inbox {
+			out = append(out, collect(perAgent[agent])...)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
 	}
 	return out, nil
 }
@@ -250,11 +254,11 @@ func (m *InMemory) Reserve(r core.Reservation) (*core.Reservation, error) {
 
 // GetReservation returns a reservation by ID (stub for in-memory store)
 func (m *InMemory) GetReservation(id string) (*core.Reservation, error) {
-	return nil, fmt.Errorf("reservation not found")
+	return nil, core.ErrNotFound
 }
 
 // ReleaseReservation releases a file reservation (stub for in-memory store)
-func (m *InMemory) ReleaseReservation(id string) error {
+func (m *InMemory) ReleaseReservation(id, agentID string) error {
 	return nil // In-memory store doesn't track reservations
 }
 

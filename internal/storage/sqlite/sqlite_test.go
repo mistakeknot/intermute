@@ -14,7 +14,7 @@ func TestSQLiteInboxSinceCursor(t *testing.T) {
 	st := NewSQLiteTest(t)
 	c1, _ := st.AppendEvent(core.Event{Type: core.EventMessageCreated, Agent: "a", Message: core.Message{ID: "m1", Project: "proj-a", From: "x", To: []string{"a"}, Body: "hi"}})
 	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Agent: "a", Message: core.Message{ID: "m2", Project: "proj-a", From: "x", To: []string{"a"}, Body: "hi2"}})
-	msgs, err := st.InboxSince("proj-a", "a", c1)
+	msgs, err := st.InboxSince("proj-a", "a", c1, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestSQLiteProjectIsolation(t *testing.T) {
 	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{ID: "m1", Project: "proj-a", From: "x", To: []string{"a"}}})
 	_, _ = st.AppendEvent(core.Event{Type: core.EventMessageCreated, Message: core.Message{ID: "m2", Project: "proj-b", From: "x", To: []string{"a"}}})
 
-	msgsA, err := st.InboxSince("proj-a", "a", 0)
+	msgsA, err := st.InboxSince("proj-a", "a", 0, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestFileReservation(t *testing.T) {
 	}
 
 	// Release the reservation
-	if err := st.ReleaseReservation(res.ID); err != nil {
+	if err := st.ReleaseReservation(res.ID, "agent-1"); err != nil {
 		t.Fatalf("release: %v", err)
 	}
 
@@ -577,7 +577,7 @@ func TestMessageWithMetadata(t *testing.T) {
 	}
 
 	// Fetch from inbox and verify metadata is preserved
-	msgs, err := st.InboxSince("proj", "bob", 0)
+	msgs, err := st.InboxSince("proj", "bob", 0, 0)
 	if err != nil {
 		t.Fatalf("inbox: %v", err)
 	}

@@ -8,6 +8,9 @@ import (
 // ErrConcurrentModification is returned when an optimistic locking conflict occurs
 var ErrConcurrentModification = errors.New("concurrent modification: entity was updated by another process")
 
+// ErrNotFound is returned when a requested entity does not exist
+var ErrNotFound = errors.New("not found")
+
 // Domain event types for Autarch domain entities
 const (
 	// Spec events

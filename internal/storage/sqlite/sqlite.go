@@ -201,7 +201,13 @@ func (s *Store) upsertMessageTx(tx *sql.Tx, project string, msg core.Message) er
 	return nil
 }
 
-func (s *Store) InboxSince(project, agent string, cursor uint64) ([]core.Message, error) {
+func (s *Store) InboxSince(project, agent string, cursor uint64, limit int) ([]core.Message, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
 	query := `SELECT i.cursor, i.project, m.message_id, m.thread_id, m.from_agent, m.to_json,
 		COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
 		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), m.created_at
@@ -213,7 +219,8 @@ func (s *Store) InboxSince(project, agent string, cursor uint64) ([]core.Message
 		query += " AND i.project = ?"
 		args = append(args, project)
 	}
-	query += " ORDER BY i.cursor ASC"
+	query += " ORDER BY i.cursor ASC LIMIT ?"
+	args = append(args, limit)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query inbox: %w", err)
@@ -266,7 +273,7 @@ func (s *Store) InboxSince(project, agent string, cursor uint64) ([]core.Message
 }
 
 func (s *Store) ThreadMessages(project, threadID string, cursor uint64) ([]core.Message, error) {
-	query := `SELECT i.cursor, m.project, m.message_id, m.thread_id, m.from_agent, m.to_json,
+	query := `SELECT MAX(i.cursor) AS cursor, m.project, m.message_id, m.thread_id, m.from_agent, m.to_json,
 		COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
 		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), m.created_at
 	 FROM inbox_index i
@@ -960,7 +967,7 @@ func (s *Store) GetReservation(id string) (*core.Reservation, error) {
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("reservation not found")
+			return nil, core.ErrNotFound
 		}
 		return nil, fmt.Errorf("get reservation: %w", err)
 	}
@@ -975,19 +982,19 @@ func (s *Store) GetReservation(id string) (*core.Reservation, error) {
 	return &res, nil
 }
 
-// ReleaseReservation marks a reservation as released
-func (s *Store) ReleaseReservation(id string) error {
+// ReleaseReservation marks a reservation as released, enforcing agent ownership atomically
+func (s *Store) ReleaseReservation(id, agentID string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := s.db.Exec(
-		`UPDATE file_reservations SET released_at = ? WHERE id = ? AND released_at IS NULL`,
-		now, id,
+		`UPDATE file_reservations SET released_at = ? WHERE id = ? AND agent_id = ? AND released_at IS NULL`,
+		now, id, agentID,
 	)
 	if err != nil {
 		return fmt.Errorf("release reservation: %w", err)
 	}
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
-		return fmt.Errorf("reservation not found or already released")
+		return core.ErrNotFound
 	}
 	return nil
 }
