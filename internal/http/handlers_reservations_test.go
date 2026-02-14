@@ -77,3 +77,179 @@ func TestReleaseReservationOwnershipEnforced(t *testing.T) {
 		t.Fatalf("missing reservation expected 404, got %d", missingResp.Code)
 	}
 }
+
+// newReservationTestEnv creates a test env using NewRouter (which includes
+// reservation endpoints). NewDomainRouter does not register reservation routes.
+type reservationTestEnv struct {
+	srv   *httptest.Server
+	store *sqlite.Store
+}
+
+func newReservationTestEnv(t *testing.T) *reservationTestEnv {
+	t.Helper()
+	st, err := sqlite.NewInMemory()
+	if err != nil {
+		t.Fatalf("sqlite: %v", err)
+	}
+	svc := NewService(st)
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	t.Cleanup(srv.Close)
+	return &reservationTestEnv{srv: srv, store: st}
+}
+
+func (e *reservationTestEnv) post(t *testing.T, path string, body any) *http.Response {
+	t.Helper()
+	buf, _ := json.Marshal(body)
+	resp, err := http.Post(e.srv.URL+path, "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
+	}
+	return resp
+}
+
+func (e *reservationTestEnv) get(t *testing.T, path string) *http.Response {
+	t.Helper()
+	resp, err := http.Get(e.srv.URL + path)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	return resp
+}
+
+func TestReservationCreateAndList(t *testing.T) {
+	env := newReservationTestEnv(t)
+	const project = "proj-test"
+
+	// Create a reservation
+	resp := env.post(t, "/api/reservations", map[string]any{
+		"agent_id":     "agent-a",
+		"project":      project,
+		"path_pattern": "src/*.go",
+		"exclusive":    true,
+		"reason":       "refactoring",
+		"ttl_minutes":  10,
+	})
+	requireStatus(t, resp, http.StatusOK)
+	res := decodeJSON[map[string]any](t, resp)
+	if res["id"] == nil || res["id"] == "" {
+		t.Fatal("expected reservation id")
+	}
+	if res["is_active"] != true {
+		t.Fatalf("expected is_active=true, got %v", res["is_active"])
+	}
+
+	// List active by project
+	listResp := env.get(t, "/api/reservations?project="+project)
+	requireStatus(t, listResp, http.StatusOK)
+	listData := decodeJSON[map[string]any](t, listResp)
+	reservations := listData["reservations"].([]any)
+	if len(reservations) != 1 {
+		t.Fatalf("expected 1 active reservation, got %d", len(reservations))
+	}
+
+	// List by agent
+	agentResp := env.get(t, "/api/reservations?agent=agent-a")
+	requireStatus(t, agentResp, http.StatusOK)
+	agentData := decodeJSON[map[string]any](t, agentResp)
+	agentRes := agentData["reservations"].([]any)
+	if len(agentRes) != 1 {
+		t.Fatalf("expected 1 reservation for agent-a, got %d", len(agentRes))
+	}
+}
+
+func TestReservationOverlapConflict(t *testing.T) {
+	env := newReservationTestEnv(t)
+	const project = "proj-test"
+
+	// Create first exclusive reservation
+	resp1 := env.post(t, "/api/reservations", map[string]any{
+		"agent_id":     "agent-a",
+		"project":      project,
+		"path_pattern": "internal/http/*.go",
+		"exclusive":    true,
+	})
+	requireStatus(t, resp1, http.StatusOK)
+	resp1.Body.Close()
+
+	// Second exclusive overlapping reservation should fail (500 due to conflict error)
+	resp2 := env.post(t, "/api/reservations", map[string]any{
+		"agent_id":     "agent-b",
+		"project":      project,
+		"path_pattern": "internal/http/router.go",
+		"exclusive":    true,
+	})
+	requireStatus(t, resp2, http.StatusInternalServerError)
+	resp2.Body.Close()
+}
+
+func TestReservationSharedAllowed(t *testing.T) {
+	env := newReservationTestEnv(t)
+	const project = "proj-test"
+
+	// Two shared overlapping reservations should both succeed
+	resp1 := env.post(t, "/api/reservations", map[string]any{
+		"agent_id":     "agent-a",
+		"project":      project,
+		"path_pattern": "docs/*.md",
+		"exclusive":    false,
+	})
+	requireStatus(t, resp1, http.StatusOK)
+	resp1.Body.Close()
+
+	resp2 := env.post(t, "/api/reservations", map[string]any{
+		"agent_id":     "agent-b",
+		"project":      project,
+		"path_pattern": "docs/README.md",
+		"exclusive":    false,
+	})
+	requireStatus(t, resp2, http.StatusOK)
+	resp2.Body.Close()
+
+	// Verify both are active
+	listResp := env.get(t, "/api/reservations?project="+project)
+	requireStatus(t, listResp, http.StatusOK)
+	listData := decodeJSON[map[string]any](t, listResp)
+	reservations := listData["reservations"].([]any)
+	if len(reservations) != 2 {
+		t.Fatalf("expected 2 shared reservations, got %d", len(reservations))
+	}
+}
+
+func TestReservationReleaseAndVerify(t *testing.T) {
+	env := newReservationTestEnv(t)
+	const project = "proj-test"
+
+	// Create reservation
+	resp := env.post(t, "/api/reservations", map[string]any{
+		"agent_id":     "agent-a",
+		"project":      project,
+		"path_pattern": "src/*.go",
+		"exclusive":    true,
+	})
+	requireStatus(t, resp, http.StatusOK)
+	res := decodeJSON[map[string]any](t, resp)
+	resID := res["id"].(string)
+
+	// Release via store (the HTTP DELETE endpoint requires auth agent matching)
+	if err := env.store.ReleaseReservation(nil, resID, "agent-a"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+
+	// Verify no longer active
+	listResp := env.get(t, "/api/reservations?project="+project)
+	requireStatus(t, listResp, http.StatusOK)
+	listData := decodeJSON[map[string]any](t, listResp)
+	reservations := listData["reservations"].([]any)
+	if len(reservations) != 0 {
+		t.Fatalf("expected 0 active reservations after release, got %d", len(reservations))
+	}
+}
+
+func TestReservationListRequiresProjectOrAgent(t *testing.T) {
+	env := newReservationTestEnv(t)
+
+	// No project or agent param → 400
+	resp := env.get(t, "/api/reservations")
+	requireStatus(t, resp, http.StatusBadRequest)
+	resp.Body.Close()
+}
