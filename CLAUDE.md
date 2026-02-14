@@ -23,3 +23,26 @@ go test ./...            # Run all tests
 - Event sourcing pattern: append to events table, materialize to indexes
 - Thread indexing tracks all participants (sender + recipients)
 - Domain entities (specs/epics/stories/tasks) follow same CRUD pattern
+
+## Multi-Session Coordination
+
+When multiple Claude Code sessions work on Intermute simultaneously:
+
+### Package Ownership Zones
+- **HTTP layer** (`internal/http/`): handlers, middleware, routing
+- **Storage layer** (`internal/storage/`, `internal/storage/sqlite/`): database, queries, migrations
+- **WebSocket layer** (`internal/ws/`): hub, connections, subscriptions
+- **Shared zone** (`internal/domain/`, `internal/core/`): coordinate via Beads before editing
+- **Rarely changed** (`cmd/intermute/`, `client/`): no default owner
+
+### Before Editing Shared Files
+1. Check `bd list --status=in_progress` for other active work
+2. If another bead claims files in the same package, coordinate or wait
+3. Create your own bead with `Files:` annotation before starting
+
+### Beads File Convention
+Every task bead MUST include a `Files:` line in its description listing affected files or packages:
+```
+Files: internal/http/handlers_domain.go, internal/http/router.go
+```
+Or package-level: `Files: internal/http/`

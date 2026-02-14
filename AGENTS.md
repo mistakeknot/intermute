@@ -201,6 +201,22 @@ When using API key auth, POST operations must include `project` field matching t
 6. **Localhost bypass** - Applies to 127.0.0.1 only; LAN origins require API key
 7. **No ack persistence** - Ack/read events logged but no status columns updated
 
+## Multi-Session Coordination
+
+This project supports parallel Claude Code sessions. Coordination uses Beads (`bd`) for work partitioning:
+
+- Every task bead includes `Files:` annotation listing affected files/packages
+- `bd list --status=in_progress` shows currently claimed work
+- Package boundaries (`internal/http/`, `internal/storage/`, `internal/ws/`) are natural ownership zones
+- `internal/domain/` and `internal/core/` are shared — use dependency ordering (blocked-by) for sequential access
+- A PreToolUse hook warns when editing files claimed by another in-progress bead
+
+For isolated parallel work, use worktree scripts:
+```bash
+scripts/worktree-setup.sh <name>    # Create isolated worktree
+scripts/worktree-teardown.sh <name> # Merge back to main and clean up
+```
+
 ## Downstream Dependencies
 
 | Repo | Uses | Location |
