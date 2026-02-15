@@ -23,7 +23,7 @@ import (
 func main() {
 	root := &cobra.Command{
 		Use:   "intermute",
-		Short: "Intermute - Agent coordination and domain API server",
+		Short: "intermute - Agent coordination and domain API server",
 	}
 
 	root.AddCommand(serveCmd())
@@ -43,8 +43,8 @@ func serveCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the Intermute server",
-		Long: `Start the Intermute HTTP server providing:
+		Short: "Start the intermute server",
+		Long: `Start the intermute HTTP server providing:
   - Agent messaging and coordination APIs
   - Domain APIs (specs, epics, stories, tasks, insights, sessions)
   - WebSocket support for real-time updates`,

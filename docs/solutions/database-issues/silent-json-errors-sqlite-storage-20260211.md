@@ -118,6 +118,6 @@ The write-path fix was paired with wrapping `AppendEvent` in a transaction (BEGI
 
 ## Related Issues
 
-- Companion fix: Transaction wrapping for AppendEvent (beads: Intermute-lcr)
-- Companion fix: HTTP 409 Conflict for ErrConcurrentModification (beads: Intermute-l0y)
+- Companion fix: Transaction wrapping for AppendEvent (beads: intermute-lcr)
+- Companion fix: HTTP 409 Conflict for ErrConcurrentModification (beads: intermute-l0y)
 - See also: Event sourcing pattern in `internal/storage/sqlite/sqlite.go` — events table → materialized indexes

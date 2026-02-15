@@ -9,7 +9,7 @@ This documentation helps AI coding assistants (Claude Code, Codex CLI) work effe
 
 ## Overview
 
-Intermute is a Go service that coordinates "agents" via a REST API (source of truth) plus WebSockets for real-time delivery, persisting state in SQLite. It ships as a Cobra CLI with `serve` (run server) and `init` (generate API keys) commands. (`README.md`, `cmd/intermute/main.go`, `go.mod`)
+intermute is a Go service that coordinates "agents" via a REST API (source of truth) plus WebSockets for real-time delivery, persisting state in SQLite. It ships as a Cobra CLI with `serve` (run server) and `init` (generate API keys) commands. (`README.md`, `cmd/intermute/main.go`, `go.mod`)
 
 ## Quick Start
 
@@ -168,7 +168,7 @@ internal/ws/                     # WebSocket hub + handler
 // cmd/intermute/main.go
 root := &cobra.Command{
 	Use:   "intermute",
-	Short: "Intermute - Agent coordination and domain API server",
+	Short: "intermute - Agent coordination and domain API server",
 }
 
 root.AddCommand(serveCmd())

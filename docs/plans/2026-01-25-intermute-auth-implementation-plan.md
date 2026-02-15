@@ -1,8 +1,8 @@
-# Intermute Auth Implementation Plan
+# intermute Auth Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Bead:** `Vauxpraudemonium-1wl` (Intermute auth model)
+**Bead:** `Vauxpraudemonium-1wl` (intermute auth model)
 
 **Goal:** Add project-scoped API key auth with localhost bypass, enforced across REST and WebSocket, without breaking local dev.
 
@@ -28,7 +28,7 @@ In `internal/auth/middleware_test.go`, add a test that:
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /root/projects/Intermute && go test ./internal/auth -v`
+Run: `cd /root/projects/intermute && go test ./internal/auth -v`
 Expected: FAIL (auth package missing)
 
 **Step 3: Write minimal implementation**
@@ -41,14 +41,14 @@ Implement:
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd /root/projects/Intermute && go test ./internal/auth -v`
+Run: `cd /root/projects/intermute && go test ./internal/auth -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git -C /root/projects/Intermute add internal/auth cmd/intermute/main.go
-git -C /root/projects/Intermute commit -m "feat(auth): add key config and middleware"
+git -C /root/projects/intermute add internal/auth cmd/intermute/main.go
+git -C /root/projects/intermute commit -m "feat(auth): add key config and middleware"
 ```
 
 ---
@@ -66,7 +66,7 @@ Update `internal/storage/storage_test.go` to require `InboxSince` to accept a pr
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /root/projects/Intermute && go test ./internal/storage -v`
+Run: `cd /root/projects/intermute && go test ./internal/storage -v`
 Expected: FAIL
 
 **Step 3: Write minimal implementation**
@@ -75,14 +75,14 @@ Add `Project` to message/event models and update the storage interface to includ
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd /root/projects/Intermute && go test ./internal/storage -v`
+Run: `cd /root/projects/intermute && go test ./internal/storage -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git -C /root/projects/Intermute add internal/core internal/storage
-git -C /root/projects/Intermute commit -m "refactor(storage): add project-scoped inbox interface"
+git -C /root/projects/intermute add internal/core internal/storage
+git -C /root/projects/intermute commit -m "refactor(storage): add project-scoped inbox interface"
 ```
 
 ---
@@ -100,7 +100,7 @@ Add a test that inserts messages for two projects and verifies `InboxSince(proje
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /root/projects/Intermute && go test ./internal/storage/sqlite -v`
+Run: `cd /root/projects/intermute && go test ./internal/storage/sqlite -v`
 Expected: FAIL
 
 **Step 3: Write minimal implementation**
@@ -112,14 +112,14 @@ Implement:
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd /root/projects/Intermute && go test ./internal/storage/sqlite -v`
+Run: `cd /root/projects/intermute && go test ./internal/storage/sqlite -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git -C /root/projects/Intermute add internal/storage/sqlite
-git -C /root/projects/Intermute commit -m "feat(storage): enforce project isolation"
+git -C /root/projects/intermute add internal/storage/sqlite
+git -C /root/projects/intermute commit -m "feat(storage): enforce project isolation"
 ```
 
 ---
@@ -141,7 +141,7 @@ Add tests that:
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /root/projects/Intermute && go test ./internal/http -v`
+Run: `cd /root/projects/intermute && go test ./internal/http -v`
 Expected: FAIL
 
 **Step 3: Write minimal implementation**
@@ -152,14 +152,14 @@ Expected: FAIL
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd /root/projects/Intermute && go test ./internal/http -v`
+Run: `cd /root/projects/intermute && go test ./internal/http -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git -C /root/projects/Intermute add internal/http
-git -C /root/projects/Intermute commit -m "feat(api): enforce project auth rules"
+git -C /root/projects/intermute add internal/http
+git -C /root/projects/intermute commit -m "feat(api): enforce project auth rules"
 ```
 
 ---
@@ -179,7 +179,7 @@ Update WS tests to:
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /root/projects/Intermute && go test ./internal/ws -v`
+Run: `cd /root/projects/intermute && go test ./internal/ws -v`
 Expected: FAIL
 
 **Step 3: Write minimal implementation**
@@ -188,14 +188,14 @@ Wrap WS handler with the same auth middleware and associate connections with pro
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd /root/projects/Intermute && go test ./internal/ws -v`
+Run: `cd /root/projects/intermute && go test ./internal/ws -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git -C /root/projects/Intermute add internal/ws internal/http/router.go
-git -C /root/projects/Intermute commit -m "feat(ws): apply auth middleware"
+git -C /root/projects/intermute add internal/ws internal/http/router.go
+git -C /root/projects/intermute commit -m "feat(ws): apply auth middleware"
 ```
 
 ---
@@ -212,7 +212,7 @@ Add a test that verifies the client sets `Authorization: Bearer ...` when config
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /root/projects/Intermute && go test ./client -v`
+Run: `cd /root/projects/intermute && go test ./client -v`
 Expected: FAIL
 
 **Step 3: Write minimal implementation**
@@ -221,14 +221,14 @@ Add client options for API key + project and set the header on requests.
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd /root/projects/Intermute && go test ./client -v`
+Run: `cd /root/projects/intermute && go test ./client -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git -C /root/projects/Intermute add client
-git -C /root/projects/Intermute commit -m "feat(client): add bearer auth and project"
+git -C /root/projects/intermute add client
+git -C /root/projects/intermute commit -m "feat(client): add bearer auth and project"
 ```
 
 ---
@@ -246,7 +246,7 @@ Document the exact commands to run the server and exercise auth behavior.
 **Step 2: Run full verification**
 
 Run:
-- `cd /root/projects/Intermute && go test ./...`
+- `cd /root/projects/intermute && go test ./...`
 - `cd /root/projects/Autarch && go test ./...`
 
 Expected: PASS
@@ -254,6 +254,6 @@ Expected: PASS
 **Step 3: Commit**
 
 ```bash
-git -C /root/projects/Intermute add README.md intermute.keys.yaml.example docs/plans/2026-01-25-intermute-auth-implementation-plan.md
-git -C /root/projects/Intermute commit -m "docs(auth): add key config and usage"
+git -C /root/projects/intermute add README.md intermute.keys.yaml.example docs/plans/2026-01-25-intermute-auth-implementation-plan.md
+git -C /root/projects/intermute commit -m "docs(auth): add key config and usage"
 ```

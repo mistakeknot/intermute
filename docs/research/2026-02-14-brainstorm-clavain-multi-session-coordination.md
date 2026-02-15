@@ -1,4 +1,4 @@
-# Brainstorm: Clavain Integration for Multi-Session Coordination in Intermute
+# Brainstorm: Clavain Integration for Multi-Session Coordination in intermute
 
 > **Date**: 2026-02-14
 > **Topic**: How to prevent multiple Claude Code sessions from stepping on each other
@@ -8,7 +8,7 @@
 
 ## The Problem
 
-When multiple Claude Code sessions work on Intermute simultaneously, several types of collisions occur:
+When multiple Claude Code sessions work on intermute simultaneously, several types of collisions occur:
 
 1. **File conflicts**: Two sessions edit the same file, creating merge conflicts or lost changes
 2. **Test interference**: Parallel `go test` runs compete for SQLite file locks
@@ -16,9 +16,9 @@ When multiple Claude Code sessions work on Intermute simultaneously, several typ
 4. **Duplicate work**: Sessions don't know what others are working on, wasting tokens
 5. **Beads contention**: The `bd.sock` daemon is single-writer, blocking concurrent issue updates
 
-## Why Intermute Is Well-Suited for Multi-Agent Work
+## Why intermute Is Well-Suited for Multi-Agent Work
 
-Before diving into solutions, it's worth noting that Intermute's architecture already has natural partition boundaries:
+Before diving into solutions, it's worth noting that intermute's architecture already has natural partition boundaries:
 
 | Package | Responsibility | Independence |
 |---------|---------------|--------------|
@@ -64,7 +64,7 @@ The de facto industry standard for agent isolation:
 - Clash proactively detects conflicts across worktrees before they happen
 - Can be wired into Claude Code's `PreToolUse` hook to warn before conflicting edits
 
-**Trade-off**: Requires per-worktree bootstrapping. Intermute is Go, so `go build` is fast, but each worktree still needs its own test database.
+**Trade-off**: Requires per-worktree bootstrapping. intermute is Go, so `go build` is fast, but each worktree still needs its own test database.
 
 ## Three Tiers of Integration
 
@@ -150,7 +150,7 @@ Our CLAUDE.md says "commit directly to main." Worktrees create branches. These a
 - File-level (`handlers.go` → Agent A, `middleware.go` → Agent B) is precise but verbose
 - Function-level is impractical
 
-**Leaning toward package-level** with Beads descriptions for finer guidance. The natural package boundaries in Intermute already provide good isolation.
+**Leaning toward package-level** with Beads descriptions for finer guidance. The natural package boundaries in intermute already provide good isolation.
 
 ### Q3: What's the Minimum Viable Integration?
 
@@ -158,15 +158,15 @@ If we could only do ONE thing, what gives the most value?
 
 **Beads-driven work partitioning with file annotations.** This requires zero new tooling — just discipline in how we create beads. Each bead's description lists the files it touches. Sessions check `bd list --status=in_progress` before editing shared files.
 
-### Q4: Should the Intermute Server Itself Help?
+### Q4: Should the intermute Server Itself Help?
 
-Intermute is a messaging system. Could it serve as the coordination channel?
+intermute is a messaging system. Could it serve as the coordination channel?
 
 - Sessions could post to a `#coordination` project/channel
 - "I'm editing `internal/http/handlers.go`" messages provide real-time awareness
 - Other sessions see the message before editing the same file
 
-**Interesting but circular** — we'd need Intermute running to coordinate work on Intermute. Fine for steady-state development, not for bootstrap.
+**Interesting but circular** — we'd need intermute running to coordinate work on intermute. Fine for steady-state development, not for bootstrap.
 
 ## Concrete Recommendations
 
@@ -185,18 +185,18 @@ Intermute is a messaging system. Could it serve as the coordination channel?
 ### Future (When Needed)
 
 7. **Agent Teams integration** for complex cross-cutting features
-8. **Self-hosting coordination on Intermute** once the server is stable enough
+8. **Self-hosting coordination on intermute** once the server is stable enough
 9. **Planner-Worker-Judge pattern** with dedicated planning and review agents
 
 ## What We're NOT Doing (And Why)
 
-- **Full orchestration framework** (ccswarm, Vibe Kanban): Intermute is a small project. The overhead exceeds the benefit until we routinely have 5+ agents.
+- **Full orchestration framework** (ccswarm, Vibe Kanban): intermute is a small project. The overhead exceeds the benefit until we routinely have 5+ agents.
 - **Custom MCP server for coordination**: Agent Teams will likely subsume this. Building our own is premature.
 - **File-level locking**: Too granular, too much friction. Package-level ownership with advisory Beads annotations is the right granularity.
 - **Database-level coordination**: SQLite's WAL mode + MaxOpenConns(1) already handles data-layer concurrency. The coordination problem is at the *code editing* level, not the data level.
 
 ## Summary
 
-The sweet spot for Intermute is **Tier 2: Beads-driven work partitioning** with a path to **Tier 3 worktrees** when needed. This builds on infrastructure we already have (Beads, Clavain hooks) and doesn't fight our trunk-based dev workflow.
+The sweet spot for intermute is **Tier 2: Beads-driven work partitioning** with a path to **Tier 3 worktrees** when needed. This builds on infrastructure we already have (Beads, Clavain hooks) and doesn't fight our trunk-based dev workflow.
 
-The key insight is that Intermute's clean package boundaries already provide natural agent ownership zones. We just need to formalize them and add lightweight coordination through Beads annotations and a conflict-check hook.
+The key insight is that intermute's clean package boundaries already provide natural agent ownership zones. We just need to formalize them and add lightweight coordination through Beads annotations and a conflict-check hook.

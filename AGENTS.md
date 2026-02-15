@@ -2,7 +2,7 @@
 
 ## Overview
 
-Intermute is a real-time coordination and messaging service for Autarch agents. It handles agent lifecycle (registration, heartbeats), project-scoped messaging with threading, and event sourcing of domain entities (specs, epics, stories, tasks, insights, sessions). Acts as the central hub for multi-agent orchestration with REST + WebSocket delivery.
+intermute is a real-time coordination and messaging service for Autarch agents. It handles agent lifecycle (registration, heartbeats), project-scoped messaging with threading, and event sourcing of domain entities (specs, epics, stories, tasks, insights, sessions). Acts as the central hub for multi-agent orchestration with REST + WebSocket delivery.
 
 ## Quick Reference
 
@@ -44,7 +44,7 @@ Intermute is a real-time coordination and messaging service for Autarch agents. 
 
 ```
 cmd/intermute/       Entry point; wires store, auth, WebSocket hub, HTTP service
-client/              Go SDK for agents to interact with Intermute
+client/              Go SDK for agents to interact with intermute
 internal/
   auth/              Keyring loading and HTTP middleware for bearer token validation
   cli/               CLI helpers (key file initialization)

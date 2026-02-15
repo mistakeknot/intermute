@@ -1,6 +1,6 @@
-# PRD: Multi-Session Coordination for Intermute
+# PRD: Multi-Session Coordination for intermute
 
-> **Bead:** Intermute-bvy
+> **Bead:** intermute-bvy
 > **Date**: 2026-02-14
 > **Status**: Draft
 > **Source**: [Brainstorm](./2026-02-14-brainstorm-clavain-multi-session-coordination.md)
@@ -9,11 +9,11 @@
 
 ## Problem Statement
 
-Multiple Claude Code sessions working on Intermute simultaneously collide in three ways: file edit conflicts (lost changes), test interference (SQLite lock contention), and duplicate work (sessions unaware of each other's scope). There is no enforcement mechanism — coordination is entirely ad hoc.
+Multiple Claude Code sessions working on intermute simultaneously collide in three ways: file edit conflicts (lost changes), test interference (SQLite lock contention), and duplicate work (sessions unaware of each other's scope). There is no enforcement mechanism — coordination is entirely ad hoc.
 
 ## Target Users
 
-- The project owner (running 2-3 concurrent Claude Code sessions on Intermute)
+- The project owner (running 2-3 concurrent Claude Code sessions on intermute)
 - Future contributors who may spin up sessions in parallel
 
 ## Success Criteria
@@ -27,7 +27,7 @@ Multiple Claude Code sessions working on Intermute simultaneously collide in thr
 
 - Supporting 5+ concurrent agents (would require full orchestration framework)
 - Building a custom MCP server or coordination service
-- Modifying Intermute's application code (this is a *development process* improvement)
+- Modifying intermute's application code (this is a *development process* improvement)
 - File-level or function-level locking (too granular for this codebase)
 
 ---
@@ -36,9 +36,9 @@ Multiple Claude Code sessions working on Intermute simultaneously collide in thr
 
 ### Feature 1: CLAUDE.md Package Ownership Convention
 
-**What**: Add a `## Multi-Session Coordination` section to Intermute's CLAUDE.md defining which packages each session should own.
+**What**: Add a `## Multi-Session Coordination` section to intermute's CLAUDE.md defining which packages each session should own.
 
-**Why**: The cheapest possible coordination — every session reads CLAUDE.md on startup. Package-level boundaries match Intermute's natural architecture.
+**Why**: The cheapest possible coordination — every session reads CLAUDE.md on startup. Package-level boundaries match intermute's natural architecture.
 
 **Spec**:
 - Define 3 ownership zones: HTTP layer, Storage layer, WebSocket layer
@@ -91,7 +91,7 @@ Multiple Claude Code sessions working on Intermute simultaneously collide in thr
   - Count of in-progress beads
   - For each in-progress bead: title, assignee, claimed files
   - Suggested available packages (not claimed by any in-progress bead)
-- Implementation: Add to Clavain's SessionStart hook or create Intermute-specific hook
+- Implementation: Add to Clavain's SessionStart hook or create intermute-specific hook
 - Output should be concise (5-10 lines max)
 
 **Files touched**: `.claude/settings.local.json` or Clavain hook configuration

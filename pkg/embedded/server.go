@@ -1,4 +1,4 @@
-// Package embedded provides an embeddable Intermute server for in-process use.
+// Package embedded provides an embeddable intermute server for in-process use.
 package embedded
 
 import (
@@ -31,7 +31,7 @@ type Config struct {
 	Host string
 }
 
-// Server is an embedded Intermute server
+// Server is an embedded intermute server
 type Server struct {
 	cfg     Config
 	store   *sqlite.Store
@@ -41,7 +41,7 @@ type Server struct {
 	mu      sync.Mutex
 }
 
-// New creates a new embedded Intermute server
+// New creates a new embedded intermute server
 func New(cfg Config) (*Server, error) {
 	// Apply defaults
 	if cfg.DBPath == "" {

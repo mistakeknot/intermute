@@ -1,7 +1,7 @@
-# Plan: Multi-Session Coordination for Intermute
+# Plan: Multi-Session Coordination for intermute
 **Phase:** planned (as of 2026-02-14T23:16:43Z)
 
-> **Bead:** Intermute-bvy
+> **Bead:** intermute-bvy
 > **PRD:** [docs/research/2026-02-14-prd-multi-session-coordination.md](../research/2026-02-14-prd-multi-session-coordination.md)
 > **Date:** 2026-02-14
 
@@ -20,7 +20,7 @@ Add after the "Design Decisions" section:
 ```markdown
 ## Multi-Session Coordination
 
-When multiple Claude Code sessions work on Intermute simultaneously:
+When multiple Claude Code sessions work on intermute simultaneously:
 
 ### Package Ownership Zones
 - **HTTP layer** (`internal/http/`): handlers, middleware, routing
@@ -211,7 +211,7 @@ bd close <id>
 # Shows in-progress work for session awareness
 set -euo pipefail
 
-echo "=== Intermute: Active Work ==="
+echo "=== intermute: Active Work ==="
 BEADS=$(bd list --status=in_progress 2>/dev/null || echo "")
 if [[ -z "$BEADS" ]]; then
     echo "No in-progress work. All packages available."

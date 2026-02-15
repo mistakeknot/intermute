@@ -1,4 +1,4 @@
-# Intermute Auth UX Implementation Plan
+# intermute Auth UX Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -27,7 +27,7 @@ In `internal/cli/init_test.go`, add a test that runs init logic into a temp dir 
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /root/projects/Intermute && go test ./internal/cli -v`
+Run: `cd /root/projects/intermute && go test ./internal/cli -v`
 Expected: FAIL (package not implemented)
 
 **Step 3: Write minimal implementation**
@@ -39,14 +39,14 @@ Implement `internal/cli/init.go` with:
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd /root/projects/Intermute && go test ./internal/cli -v`
+Run: `cd /root/projects/intermute && go test ./internal/cli -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git -C /root/projects/Intermute add internal/cli
-git -C /root/projects/Intermute commit -m "feat(cli): add intermute init"
+git -C /root/projects/intermute add internal/cli
+git -C /root/projects/intermute commit -m "feat(cli): add intermute init"
 ```
 
 ---
@@ -63,7 +63,7 @@ Add a small unit test in `internal/cli/init_test.go` (or a new one) that exercis
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /root/projects/Intermute && go test ./internal/cli -v`
+Run: `cd /root/projects/intermute && go test ./internal/cli -v`
 Expected: FAIL
 
 **Step 3: Write minimal implementation**
@@ -78,14 +78,14 @@ Update `cmd/intermute/main.go` to:
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd /root/projects/Intermute && go test ./internal/cli -v`
+Run: `cd /root/projects/intermute && go test ./internal/cli -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git -C /root/projects/Intermute add cmd/intermute/main.go README.md
-git -C /root/projects/Intermute commit -m "feat(cli): wire intermute init command"
+git -C /root/projects/intermute add cmd/intermute/main.go README.md
+git -C /root/projects/intermute commit -m "feat(cli): wire intermute init command"
 ```
 
 ---
@@ -110,7 +110,7 @@ In `internal/auth/bootstrap_test.go`, add a test that:
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /root/projects/Intermute && go test ./internal/auth -v`
+Run: `cd /root/projects/intermute && go test ./internal/auth -v`
 Expected: FAIL
 
 **Step 3: Write minimal implementation**
@@ -122,14 +122,14 @@ Implement a bootstrap helper that:
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd /root/projects/Intermute && go test ./internal/auth -v`
+Run: `cd /root/projects/intermute && go test ./internal/auth -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git -C /root/projects/Intermute add internal/auth cmd/intermute/main.go
-git -C /root/projects/Intermute commit -m "feat(auth): bootstrap dev keys when missing"
+git -C /root/projects/intermute add internal/auth cmd/intermute/main.go
+git -C /root/projects/intermute commit -m "feat(auth): bootstrap dev keys when missing"
 ```
 
 ---
@@ -151,7 +151,7 @@ Add a WS test covering localhost dev mode that:
 
 **Step 2: Run test to verify it fails**
 
-Run: `cd /root/projects/Intermute && go test ./internal/ws -v`
+Run: `cd /root/projects/intermute && go test ./internal/ws -v`
 Expected: FAIL
 
 **Step 3: Write minimal implementation**
@@ -164,14 +164,14 @@ This is mostly present; adjust only if tests reveal gaps.
 
 **Step 4: Run test to verify it passes**
 
-Run: `cd /root/projects/Intermute && go test ./internal/ws -v`
+Run: `cd /root/projects/intermute && go test ./internal/ws -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git -C /root/projects/Intermute add internal/ws README.md intermute.keys.yaml.example
-git -C /root/projects/Intermute commit -m "docs(auth): improve dev and ws setup guidance"
+git -C /root/projects/intermute add internal/ws README.md intermute.keys.yaml.example
+git -C /root/projects/intermute commit -m "docs(auth): improve dev and ws setup guidance"
 ```
 
 ---
@@ -184,7 +184,7 @@ git -C /root/projects/Intermute commit -m "docs(auth): improve dev and ws setup 
 **Step 1: Run full verification**
 
 Run:
-- `cd /root/projects/Intermute && go test ./...`
+- `cd /root/projects/intermute && go test ./...`
 - `cd /root/projects/Autarch && go test ./...`
 
 Expected: PASS
@@ -194,7 +194,7 @@ Expected: PASS
 Document and run:
 
 ```bash
-cd /root/projects/Intermute
+cd /root/projects/intermute
 rm -f intermute.keys.yaml
 
 go run ./cmd/intermute init --project autarch
@@ -213,6 +213,6 @@ export INTERMUTE_PROJECT=autarch
 **Step 3: Commit**
 
 ```bash
-git -C /root/projects/Intermute add docs/plans/2026-01-25-intermute-auth-ux-implementation-plan.md README.md
-git -C /root/projects/Intermute commit -m "docs: add auth ux plan and smoke test steps"
+git -C /root/projects/intermute add docs/plans/2026-01-25-intermute-auth-ux-implementation-plan.md README.md
+git -C /root/projects/intermute commit -m "docs: add auth ux plan and smoke test steps"
 ```

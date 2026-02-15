@@ -1,4 +1,4 @@
-// Package client provides a Go client for the Intermute coordination server.
+// Package client provides a Go client for the intermute coordination server.
 // This file contains WebSocket support for real-time event subscriptions.
 package client
 

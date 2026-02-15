@@ -1,8 +1,8 @@
-# Intermute Auth UX Implementation Plan
+# intermute Auth UX Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Bead:** `Intermute-fw3 (Task reference)`
+**Bead:** `intermute-fw3 (Task reference)`
 
 **Goal:** Add a user-friendly `intermute init --project <name>` command and auto-generate a dev key when the keyring file is missing.
 

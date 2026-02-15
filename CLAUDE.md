@@ -26,7 +26,7 @@ go test ./...            # Run all tests
 
 ## Multi-Session Coordination
 
-When multiple Claude Code sessions work on Intermute simultaneously:
+When multiple Claude Code sessions work on intermute simultaneously:
 
 ### Package Ownership Zones
 - **HTTP layer** (`internal/http/`): handlers, middleware, routing

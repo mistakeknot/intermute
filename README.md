@@ -1,4 +1,4 @@
-# Intermute
+# intermute
 
 Coordination service for Autarch agents.
 

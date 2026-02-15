@@ -2,7 +2,7 @@
 
 > **Date**: 2026-02-14
 > **Scope**: Practical patterns for multiple AI coding agents working on the same codebase without conflicts
-> **Applicability**: Intermute project (Go/SQLite codebase) and similar projects
+> **Applicability**: intermute project (Go/SQLite codebase) and similar projects
 
 ---
 
@@ -16,7 +16,7 @@
 6. [Beads and Issue Trackers for Work Partitioning](#6-beads-and-issue-trackers-for-work-partitioning)
 7. [Third-Party Orchestration Tools](#7-third-party-orchestration-tools)
 8. [Comparison Matrix](#8-comparison-matrix)
-9. [Recommended Patterns for Intermute](#9-recommended-patterns-for-intermute)
+9. [Recommended Patterns for intermute](#9-recommended-patterns-for-intermute)
 10. [Sources](#10-sources)
 
 ---
@@ -292,7 +292,7 @@ This pattern can be formalized with a small CLI tool or MCP server. The `.locks/
 
 SQLite's concurrency model is directly relevant in two ways:
 1. **As a coordination database**: Using SQLite itself to track agent task claims and status
-2. **As a shared resource**: Multiple agents may need to modify the same SQLite database (e.g., Intermute's data store)
+2. **As a shared resource**: Multiple agents may need to modify the same SQLite database (e.g., intermute's data store)
 
 ### 5.2 SQLite Concurrency Fundamentals
 
@@ -373,11 +373,11 @@ SELECT * FROM agent_events WHERE processed = 0 ORDER BY created_at;
 
 The pure Go SQLite driver (`modernc.org/sqlite` or `github.com/mattn/go-sqlite3`) has specific constraints:
 - `mattn/go-sqlite3` explicitly states it does not support concurrent access
-- `modernc.org/sqlite` (the pure Go driver used by Intermute) handles concurrency through Go's `database/sql` connection pool
+- `modernc.org/sqlite` (the pure Go driver used by intermute) handles concurrency through Go's `database/sql` connection pool
 - Setting `db.SetMaxOpenConns(1)` serializes all access through a single connection, preventing SQLITE_BUSY but creating a bottleneck
 - PRAGMAs (WAL, busy_timeout) only apply to the connection they are executed on, which is problematic with pooled connections
 
-**Recommendation for Intermute:** The current architecture (event sourcing pattern, append to events table, materialize to indexes) is already well-suited for multi-agent scenarios. Multiple agents can append events safely with WAL mode, and a single process handles materialization.
+**Recommendation for intermute:** The current architecture (event sourcing pattern, append to events table, materialize to indexes) is already well-suited for multi-agent scenarios. Multiple agents can append events safely with WAL mode, and a single process handles materialization.
 
 ---
 
@@ -416,7 +416,7 @@ bd list --json                                     # Machine-readable for automa
 4. Agent sets status to `in_progress`, preventing other agents from claiming
 5. On completion, dependent tasks automatically become ready
 
-**Example epic structure for Intermute:**
+**Example epic structure for intermute:**
 ```
 Epic: "Add rate limiting"
   Task 1: "Add rate limiter middleware" (owner: agent-1, files: internal/http/middleware.go)
@@ -555,11 +555,11 @@ CLI tool for managing Git worktrees with GitHub issues and Claude Code integrati
 
 ---
 
-## 9. Recommended Patterns for Intermute
+## 9. Recommended Patterns for intermute
 
 ### 9.1 Current Architecture Assessment
 
-Intermute's architecture is well-suited for multi-agent work:
+intermute's architecture is well-suited for multi-agent work:
 - **Clean package boundaries**: `internal/http/`, `internal/storage/sqlite/`, `internal/ws/`, `internal/domain/`
 - **Event sourcing pattern**: Append-only events table naturally handles concurrent writes
 - **Composite primary keys**: Multi-tenant isolation prevents cross-agent data conflicts
@@ -634,7 +634,7 @@ For 5+ agents or complex cross-cutting features:
 
 ### 9.5 SQLite-Specific Recommendations
 
-For Intermute's SQLite database under multi-agent scenarios:
+For intermute's SQLite database under multi-agent scenarios:
 
 1. **Enable WAL mode** in the connection setup (if not already):
 ```go

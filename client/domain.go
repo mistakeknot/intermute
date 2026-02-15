@@ -1,4 +1,4 @@
-// Package client provides a Go client for the Intermute coordination server.
+// Package client provides a Go client for the intermute coordination server.
 // This file contains domain entity types and CRUD methods for specs, epics,
 // stories, tasks, insights, and sessions.
 package client
