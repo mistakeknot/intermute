@@ -1,6 +1,9 @@
 package core
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type EventType string
 
@@ -88,4 +91,26 @@ type Reservation struct {
 // IsActive returns true if the reservation is still active
 func (r *Reservation) IsActive() bool {
 	return r.ReleasedAt == nil && time.Now().Before(r.ExpiresAt)
+}
+
+// ConflictDetail describes a single conflicting reservation.
+type ConflictDetail struct {
+	ReservationID string    `json:"reservation_id"`
+	AgentID       string    `json:"agent_id"`
+	AgentName     string    `json:"held_by"`
+	Pattern       string    `json:"pattern"`
+	Reason        string    `json:"reason,omitempty"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
+// ConflictError is returned when a reservation conflicts with active reservations.
+type ConflictError struct {
+	Conflicts []ConflictDetail
+}
+
+func (e *ConflictError) Error() string {
+	if len(e.Conflicts) == 1 {
+		return fmt.Sprintf("reservation conflict with %s (%s)", e.Conflicts[0].AgentName, e.Conflicts[0].Pattern)
+	}
+	return fmt.Sprintf("reservation conflicts with %d active reservations", len(e.Conflicts))
 }

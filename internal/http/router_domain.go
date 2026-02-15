@@ -13,6 +13,14 @@ func NewDomainRouter(svc *DomainService, wsHandler http.Handler, mw func(http.Ha
 		return handler
 	}
 
+	// Health check (unauthenticated)
+	mux.HandleFunc("/health", handleHealth)
+
+	// File reservations
+	mux.Handle("/api/reservations", wrap(svc.handleReservations))
+	mux.Handle("/api/reservations/check", wrap(svc.checkConflicts))
+	mux.Handle("/api/reservations/", wrap(svc.handleReservationByID))
+
 	// Existing messaging endpoints
 	mux.Handle("/api/agents", wrap(svc.handleAgents))
 	mux.Handle("/api/agents/", wrap(svc.handleAgentHeartbeat))

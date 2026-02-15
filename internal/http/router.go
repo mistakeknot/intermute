@@ -19,6 +19,7 @@ func NewRouter(svc *Service, wsHandler http.Handler, mw func(http.Handler) http.
 	mux.Handle("/api/threads", wrap(svc.handleListThreads))
 	mux.Handle("/api/threads/", wrap(svc.handleThreadMessages))
 	mux.Handle("/api/reservations", wrap(svc.handleReservations))
+	mux.Handle("/api/reservations/check", wrap(svc.checkConflicts))
 	mux.Handle("/api/reservations/", wrap(svc.handleReservationByID))
 	if wsHandler != nil {
 		if mw != nil {

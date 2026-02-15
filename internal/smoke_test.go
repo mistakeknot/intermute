@@ -285,7 +285,7 @@ func TestSmokeReservationFlow(t *testing.T) {
 		"reason":       "refactoring main",
 		"ttl_minutes":  5,
 	})
-	if resResp.StatusCode != http.StatusOK {
+	if resResp.StatusCode != http.StatusCreated {
 		t.Fatalf("reserve: %d", resResp.StatusCode)
 	}
 	reservation := decode[map[string]any](t, resResp)
@@ -312,8 +312,8 @@ func TestSmokeReservationFlow(t *testing.T) {
 		"path_pattern": "cmd/intermute/main.go",
 		"exclusive":    true,
 	})
-	if conflictResp.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("expected 500 for conflict, got %d", conflictResp.StatusCode)
+	if conflictResp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 for conflict, got %d", conflictResp.StatusCode)
 	}
 	conflictResp.Body.Close()
 

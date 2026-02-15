@@ -33,8 +33,8 @@ func TestReleaseReservationOwnershipEnforced(t *testing.T) {
 	createReq.Header.Set("Content-Type", "application/json")
 	createResp := httptest.NewRecorder()
 	h.ServeHTTP(createResp, createReq)
-	if createResp.Code != http.StatusOK {
-		t.Fatalf("create reservation expected 200, got %d", createResp.Code)
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create reservation expected 201, got %d", createResp.Code)
 	}
 
 	var created struct {
@@ -129,7 +129,7 @@ func TestReservationCreateAndList(t *testing.T) {
 		"reason":       "refactoring",
 		"ttl_minutes":  10,
 	})
-	requireStatus(t, resp, http.StatusOK)
+	requireStatus(t, resp, http.StatusCreated)
 	res := decodeJSON[map[string]any](t, resp)
 	if res["id"] == nil || res["id"] == "" {
 		t.Fatal("expected reservation id")
@@ -168,18 +168,29 @@ func TestReservationOverlapConflict(t *testing.T) {
 		"path_pattern": "internal/http/*.go",
 		"exclusive":    true,
 	})
-	requireStatus(t, resp1, http.StatusOK)
+	requireStatus(t, resp1, http.StatusCreated)
 	resp1.Body.Close()
 
-	// Second exclusive overlapping reservation should fail (500 due to conflict error)
+	// Second exclusive overlapping reservation should fail with 409 Conflict
 	resp2 := env.post(t, "/api/reservations", map[string]any{
 		"agent_id":     "agent-b",
 		"project":      project,
 		"path_pattern": "internal/http/router.go",
 		"exclusive":    true,
 	})
-	requireStatus(t, resp2, http.StatusInternalServerError)
-	resp2.Body.Close()
+	requireStatus(t, resp2, http.StatusConflict)
+	conflictBody := decodeJSON[map[string]any](t, resp2)
+	if conflictBody["error"] != "reservation_conflict" {
+		t.Fatalf("expected error=reservation_conflict, got %v", conflictBody["error"])
+	}
+	conflicts := conflictBody["conflicts"].([]any)
+	if len(conflicts) == 0 {
+		t.Fatal("expected at least one conflict detail")
+	}
+	detail := conflicts[0].(map[string]any)
+	if detail["pattern"] == nil || detail["held_by"] == nil {
+		t.Fatal("conflict detail missing pattern or held_by")
+	}
 }
 
 func TestReservationSharedAllowed(t *testing.T) {
@@ -193,7 +204,7 @@ func TestReservationSharedAllowed(t *testing.T) {
 		"path_pattern": "docs/*.md",
 		"exclusive":    false,
 	})
-	requireStatus(t, resp1, http.StatusOK)
+	requireStatus(t, resp1, http.StatusCreated)
 	resp1.Body.Close()
 
 	resp2 := env.post(t, "/api/reservations", map[string]any{
@@ -202,7 +213,7 @@ func TestReservationSharedAllowed(t *testing.T) {
 		"path_pattern": "docs/README.md",
 		"exclusive":    false,
 	})
-	requireStatus(t, resp2, http.StatusOK)
+	requireStatus(t, resp2, http.StatusCreated)
 	resp2.Body.Close()
 
 	// Verify both are active
@@ -226,7 +237,7 @@ func TestReservationReleaseAndVerify(t *testing.T) {
 		"path_pattern": "src/*.go",
 		"exclusive":    true,
 	})
-	requireStatus(t, resp, http.StatusOK)
+	requireStatus(t, resp, http.StatusCreated)
 	res := decodeJSON[map[string]any](t, resp)
 	resID := res["id"].(string)
 

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 type registerAgentRequest struct {
 	Name         string            `json:"name"`
+	SessionID    string            `json:"session_id,omitempty"`
 	Project      string            `json:"project"`
 	Capabilities []string          `json:"capabilities"`
 	Metadata     map[string]string `json:"metadata"`
@@ -115,6 +117,7 @@ func (s *Service) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	agent, err := s.store.RegisterAgent(r.Context(), core.Agent{
 		Name:         req.Name,
+		SessionID:    strings.TrimSpace(req.SessionID),
 		Project:      strings.TrimSpace(req.Project),
 		Capabilities: req.Capabilities,
 		Metadata:     req.Metadata,
@@ -123,6 +126,15 @@ func (s *Service) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		LastSeen:     now,
 	})
 	if err != nil {
+		if errors.Is(err, core.ErrActiveSessionConflict) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "session_id is in use by an active agent",
+				"code":  "active_session_conflict",
+			})
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}

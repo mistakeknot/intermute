@@ -11,6 +11,13 @@ var ErrConcurrentModification = errors.New("concurrent modification: entity was 
 // ErrNotFound is returned when a requested entity does not exist
 var ErrNotFound = errors.New("not found")
 
+// ErrActiveSessionConflict is returned when a session_id is already in use by an active agent.
+var ErrActiveSessionConflict = errors.New("active session conflict: session_id is in use by an agent with a recent heartbeat")
+
+// SessionStaleThreshold is the duration after which an agent's heartbeat is considered stale,
+// allowing session_id reuse.
+const SessionStaleThreshold = 5 * time.Minute
+
 // Domain event types for Autarch domain entities
 const (
 	// Spec events
@@ -38,6 +45,9 @@ const (
 	// Session events
 	EventSessionStarted EventType = "session.started"
 	EventSessionStopped EventType = "session.stopped"
+
+	// Reservation events
+	EventReservationExpired EventType = "reservation.expired"
 )
 
 // SpecStatus represents the status of a specification

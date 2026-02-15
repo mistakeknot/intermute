@@ -74,6 +74,21 @@ func applySchema(db *sql.DB) error {
 	if err := migrateDomainVersions(db); err != nil {
 		return err
 	}
+	if err := migrateAgentSessionID(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func migrateAgentSessionID(db *sql.DB) error {
+	if !tableExists(db, "agents") {
+		return nil
+	}
+	_, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_session_id
+		ON agents(session_id) WHERE session_id IS NOT NULL AND session_id != ''`)
+	if err != nil {
+		return fmt.Errorf("create session_id index: %w", err)
+	}
 	return nil
 }
 
@@ -592,12 +607,6 @@ func tableHasCompositePK(db *sql.DB, table string) bool {
 }
 
 func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, error) {
-	if agent.ID == "" {
-		agent.ID = uuid.NewString()
-	}
-	if agent.SessionID == "" {
-		agent.SessionID = uuid.NewString()
-	}
 	now := time.Now().UTC()
 	if agent.CreatedAt.IsZero() {
 		agent.CreatedAt = now
@@ -615,6 +624,80 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 		return core.Agent{}, fmt.Errorf("marshal metadata: %w", err)
 	}
 
+	// Session identity reuse: if session_id is provided, check for existing agent
+	if agent.SessionID != "" {
+		if _, err := uuid.Parse(agent.SessionID); err != nil {
+			return core.Agent{}, fmt.Errorf("invalid session_id %q: must be a valid UUID", agent.SessionID)
+		}
+
+		tx, err := s.db.BeginTx(context.Background(), nil)
+		if err != nil {
+			return core.Agent{}, fmt.Errorf("begin session reuse tx: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+
+		var existingID, existingLastSeen string
+		err = tx.QueryRow(`SELECT id, last_seen FROM agents WHERE session_id = ?`, agent.SessionID).Scan(&existingID, &existingLastSeen)
+		if err == nil {
+			// Found existing agent with this session_id
+			lastSeen, _ := time.Parse(time.RFC3339Nano, existingLastSeen)
+			if time.Since(lastSeen) < core.SessionStaleThreshold {
+				return core.Agent{}, core.ErrActiveSessionConflict
+			}
+			// Agent is stale — check for active reservations
+			var activeCount int
+			err = tx.QueryRow(
+				`SELECT COUNT(*) FROM file_reservations WHERE agent_id = ? AND released_at IS NULL AND expires_at > ?`,
+				existingID, now.Format(time.RFC3339Nano),
+			).Scan(&activeCount)
+			if err != nil {
+				return core.Agent{}, fmt.Errorf("check active reservations: %w", err)
+			}
+			if activeCount > 0 {
+				return core.Agent{}, core.ErrActiveSessionConflict
+			}
+			// Reuse the existing agent: update its fields, keep its ID
+			if _, err := tx.Exec(
+				`UPDATE agents SET name=?, capabilities_json=?, metadata_json=?, status=?, last_seen=? WHERE id=?`,
+				agent.Name, string(capsJSON), string(metaJSON), agent.Status,
+				agent.LastSeen.Format(time.RFC3339Nano), existingID,
+			); err != nil {
+				return core.Agent{}, fmt.Errorf("reuse agent: %w", err)
+			}
+			if err := tx.Commit(); err != nil {
+				return core.Agent{}, fmt.Errorf("commit session reuse: %w", err)
+			}
+			agent.ID = existingID
+			return agent, nil
+		}
+		if err != sql.ErrNoRows {
+			return core.Agent{}, fmt.Errorf("lookup session: %w", err)
+		}
+		// Not found — fall through to insert (within the transaction)
+		if agent.ID == "" {
+			agent.ID = uuid.NewString()
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO agents (id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			agent.ID, agent.SessionID, agent.Name, agent.Project, string(capsJSON), string(metaJSON), agent.Status,
+			agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
+		); err != nil {
+			return core.Agent{}, fmt.Errorf("register agent: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return core.Agent{}, fmt.Errorf("commit register: %w", err)
+		}
+		return agent, nil
+	}
+
+	// No session_id provided — original behavior
+	if agent.ID == "" {
+		agent.ID = uuid.NewString()
+	}
+	if agent.SessionID == "" {
+		agent.SessionID = uuid.NewString()
+	}
 	if _, err := s.db.Exec(
 		`INSERT INTO agents (id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -926,9 +1009,10 @@ func (s *Store) Reserve(_ context.Context, r core.Reservation) (*core.Reservatio
 	}()
 
 	activeRows, err := tx.Query(
-		`SELECT id, path_pattern, exclusive
-		 FROM file_reservations
-		 WHERE project = ? AND released_at IS NULL AND expires_at > ? AND agent_id != ?`,
+		`SELECT r.id, r.agent_id, COALESCE(a.name, r.agent_id), r.path_pattern, r.exclusive, r.reason, r.expires_at
+		 FROM file_reservations r
+		 LEFT JOIN agents a ON r.agent_id = a.id
+		 WHERE r.project = ? AND r.released_at IS NULL AND r.expires_at > ? AND r.agent_id != ?`,
 		r.Project, now.Format(time.RFC3339Nano), r.AgentID,
 	)
 	if err != nil {
@@ -936,13 +1020,18 @@ func (s *Store) Reserve(_ context.Context, r core.Reservation) (*core.Reservatio
 	}
 	defer activeRows.Close()
 
+	var conflicts []core.ConflictDetail
 	for activeRows.Next() {
 		var (
 			existingID      string
+			existingAgentID string
+			existingName    string
 			existingPattern string
 			existingExcl    int
+			existingReason  sql.NullString
+			existingExpires string
 		)
-		if err := activeRows.Scan(&existingID, &existingPattern, &existingExcl); err != nil {
+		if err := activeRows.Scan(&existingID, &existingAgentID, &existingName, &existingPattern, &existingExcl, &existingReason, &existingExpires); err != nil {
 			return nil, fmt.Errorf("scan active reservation: %w", err)
 		}
 		// Shared reservations can overlap each other.
@@ -954,7 +1043,15 @@ func (s *Store) Reserve(_ context.Context, r core.Reservation) (*core.Reservatio
 			return nil, fmt.Errorf("check reservation overlap against %q: %w", existingPattern, err)
 		}
 		if overlap {
-			return nil, fmt.Errorf("reservation conflict with active reservation %s (%s)", existingID, existingPattern)
+			expiresAt, _ := time.Parse(time.RFC3339Nano, existingExpires)
+			conflicts = append(conflicts, core.ConflictDetail{
+				ReservationID: existingID,
+				AgentID:       existingAgentID,
+				AgentName:     existingName,
+				Pattern:       existingPattern,
+				Reason:        existingReason.String,
+				ExpiresAt:     expiresAt,
+			})
 		}
 	}
 	if err := activeRows.Err(); err != nil {
@@ -962,6 +1059,9 @@ func (s *Store) Reserve(_ context.Context, r core.Reservation) (*core.Reservatio
 	}
 	if err := activeRows.Close(); err != nil {
 		return nil, fmt.Errorf("close active reservations: %w", err)
+	}
+	if len(conflicts) > 0 {
+		return nil, &core.ConflictError{Conflicts: conflicts}
 	}
 
 	_, err = tx.Exec(
@@ -1129,6 +1229,89 @@ func (s *Store) scanReservationsWithRelease(rows *sql.Rows) ([]core.Reservation,
 		return nil, fmt.Errorf("rows: %w", err)
 	}
 	return out, nil
+}
+
+// CheckConflicts returns active reservations that would conflict with the given pattern.
+func (s *Store) CheckConflicts(_ context.Context, project, pathPattern string, exclusive bool) ([]core.ConflictDetail, error) {
+	if err := glob.ValidateComplexity(pathPattern); err != nil {
+		return nil, fmt.Errorf("invalid pattern %q: %w", pathPattern, err)
+	}
+
+	now := time.Now().UTC()
+	rows, err := s.db.Query(
+		`SELECT r.id, r.agent_id, COALESCE(a.name, r.agent_id), r.path_pattern, r.exclusive, r.reason, r.expires_at
+		 FROM file_reservations r
+		 LEFT JOIN agents a ON r.agent_id = a.id
+		 WHERE r.project = ? AND r.released_at IS NULL AND r.expires_at > ?`,
+		project, now.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query active reservations: %w", err)
+	}
+	defer rows.Close()
+
+	var conflicts []core.ConflictDetail
+	for rows.Next() {
+		var (
+			id, agentID, name, pattern string
+			excl                       int
+			reasonNull                 sql.NullString
+			expiresStr                 string
+		)
+		if err := rows.Scan(&id, &agentID, &name, &pattern, &excl, &reasonNull, &expiresStr); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		if !exclusive && excl == 0 {
+			continue // shared-shared is always allowed
+		}
+		overlap, err := glob.PatternsOverlap(pathPattern, pattern)
+		if err != nil {
+			continue // skip invalid patterns
+		}
+		if overlap {
+			expiresAt, _ := time.Parse(time.RFC3339Nano, expiresStr)
+			conflicts = append(conflicts, core.ConflictDetail{
+				ReservationID: id,
+				AgentID:       agentID,
+				AgentName:     name,
+				Pattern:       pattern,
+				Reason:        reasonNull.String,
+				ExpiresAt:     expiresAt,
+			})
+		}
+	}
+	return conflicts, rows.Err()
+}
+
+// SweepExpired deletes unreleased reservations that have expired and whose
+// owning agent has not heartbeated recently. Returns deleted reservations.
+func (s *Store) SweepExpired(_ context.Context, expiredBefore time.Time, heartbeatAfter time.Time) ([]core.Reservation, error) {
+	rows, err := s.db.Query(
+		`DELETE FROM file_reservations
+		 WHERE released_at IS NULL
+		   AND expires_at < ?
+		   AND agent_id NOT IN (
+		     SELECT id FROM agents WHERE last_seen > ?
+		   )
+		 RETURNING id, agent_id, project, path_pattern, exclusive, reason, created_at, expires_at`,
+		expiredBefore.Format(time.RFC3339Nano),
+		heartbeatAfter.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("sweep expired reservations: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanReservations(rows)
+}
+
+// Close checkpoints the WAL and closes the database connection.
+func (s *Store) Close() error {
+	if ql, ok := s.db.(*queryLogger); ok {
+		_, _ = ql.inner.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		return ql.inner.Close()
+	}
+	return nil
 }
 
 // migrateDomainVersions adds version columns to domain tables (specs, epics, stories, tasks)

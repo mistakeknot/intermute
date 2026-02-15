@@ -36,9 +36,10 @@ func main() {
 
 func serveCmd() *cobra.Command {
 	var (
-		port   int
-		host   string
-		dbPath string
+		port       int
+		host       string
+		dbPath     string
+		socketPath string
 	)
 
 	cmd := &cobra.Command{
@@ -53,6 +54,9 @@ func serveCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("store init: %w", err)
 			}
+
+			// Wrap store with circuit breaker + retry resilience
+			resilient := sqlite.NewResilient(store)
 
 			// Bootstrap dev key if keys file is missing
 			keysPath := auth.ResolveKeysPath()
@@ -71,11 +75,16 @@ func serveCmd() *cobra.Command {
 			}
 
 			hub := ws.NewHub()
-			svc := httpapi.NewDomainService(store).WithBroadcaster(hub)
+
+			// Start reservation sweeper (60s interval, 5min heartbeat grace)
+			sweeper := sqlite.NewSweeper(store, hub, 60*time.Second, 5*time.Minute)
+			sweeper.Start(context.Background())
+
+			svc := httpapi.NewDomainService(resilient).WithBroadcaster(hub)
 			router := httpapi.NewDomainRouter(svc, hub.Handler(), auth.Middleware(keyring))
 
 			addr := fmt.Sprintf("%s:%d", host, port)
-			srv, err := server.New(server.Config{Addr: addr, Handler: router})
+			srv, err := server.New(server.Config{Addr: addr, SocketPath: socketPath, Handler: router})
 			if err != nil {
 				return fmt.Errorf("server init: %w", err)
 			}
@@ -87,12 +96,27 @@ func serveCmd() *cobra.Command {
 			go func() {
 				<-quit
 				log.Println("shutting down...")
+
+				// 1. Stop sweeper
+				sweeper.Stop()
+				log.Println("sweeper stopped")
+
+				// 2. Drain in-flight HTTP requests
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				_ = srv.Shutdown(ctx)
+
+				// 3. Checkpoint WAL and close database
+				if err := store.Close(); err != nil {
+					log.Printf("store close: %v", err)
+				}
+				log.Println("database closed")
 			}()
 
 			log.Printf("intermute server starting on %s", addr)
+			if socketPath != "" {
+				log.Printf("intermute unix socket: %s", socketPath)
+			}
 			if err := srv.Start(); err != nil && err != http.ErrServerClosed {
 				return fmt.Errorf("server: %w", err)
 			}
@@ -103,6 +127,7 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().IntVar(&port, "port", 7338, "HTTP server port")
 	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "HTTP server bind address")
 	cmd.Flags().StringVar(&dbPath, "db", "intermute.db", "SQLite database path")
+	cmd.Flags().StringVar(&socketPath, "socket", "", "Unix domain socket path (e.g. /var/run/intermute.sock)")
 
 	return cmd
 }

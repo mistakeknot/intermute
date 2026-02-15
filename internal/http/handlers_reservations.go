@@ -64,6 +64,7 @@ type ReservationStore interface {
 	ReleaseReservation(ctx context.Context, id, agentID string) error
 	ActiveReservations(ctx context.Context, project string) ([]core.Reservation, error)
 	AgentReservations(ctx context.Context, agentID string) ([]core.Reservation, error)
+	CheckConflicts(ctx context.Context, project, pathPattern string, exclusive bool) ([]core.ConflictDetail, error)
 }
 
 func (s *Service) handleReservations(w http.ResponseWriter, r *http.Request) {
@@ -127,11 +128,22 @@ func (s *Service) createReservation(w http.ResponseWriter, r *http.Request) {
 		TTL:         ttl,
 	})
 	if err != nil {
+		var conflictErr *core.ConflictError
+		if errors.As(err, &conflictErr) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":     "reservation_conflict",
+				"conflicts": conflictErr.Conflicts,
+			})
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(toAPIReservation(*res))
 }
 
@@ -167,6 +179,33 @@ func (s *Service) listReservations(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(reservationsResponse{Reservations: apiRes})
+}
+
+func (s *Service) checkConflicts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	project := r.URL.Query().Get("project")
+	pattern := r.URL.Query().Get("pattern")
+	if project == "" || pattern == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	exclusive := r.URL.Query().Get("exclusive") != "false" // default true
+
+	conflicts, err := s.store.CheckConflicts(r.Context(), project, pattern, exclusive)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"conflicts": conflicts,
+	})
 }
 
 func (s *Service) releaseReservation(w http.ResponseWriter, r *http.Request, id string) {

@@ -40,6 +40,7 @@ type Store interface {
 	ReleaseReservation(ctx context.Context, id, agentID string) error
 	ActiveReservations(ctx context.Context, project string) ([]core.Reservation, error)
 	AgentReservations(ctx context.Context, agentID string) ([]core.Reservation, error)
+	CheckConflicts(ctx context.Context, project, pathPattern string, exclusive bool) ([]core.ConflictDetail, error)
 }
 
 // InMemory is a minimal in-memory store for tests.
@@ -194,6 +195,24 @@ func (m *InMemory) ListThreads(_ context.Context, project, agent string, cursor 
 }
 
 func (m *InMemory) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, error) {
+	// Check for session_id reuse
+	if agent.SessionID != "" {
+		for _, existing := range m.agents {
+			if existing.SessionID == agent.SessionID {
+				if time.Since(existing.LastSeen) < core.SessionStaleThreshold {
+					return core.Agent{}, core.ErrActiveSessionConflict
+				}
+				// Reuse: update existing agent
+				existing.Name = agent.Name
+				existing.Capabilities = agent.Capabilities
+				existing.Metadata = agent.Metadata
+				existing.Status = agent.Status
+				existing.LastSeen = time.Now().UTC()
+				m.agents[existing.ID] = existing
+				return existing, nil
+			}
+		}
+	}
 	if agent.ID == "" {
 		agent.ID = agent.Name
 	}
@@ -270,5 +289,10 @@ func (m *InMemory) ActiveReservations(_ context.Context, project string) ([]core
 
 // AgentReservations returns an agent's reservations (stub for in-memory store)
 func (m *InMemory) AgentReservations(_ context.Context, agentID string) ([]core.Reservation, error) {
+	return nil, nil // In-memory store doesn't track reservations
+}
+
+// CheckConflicts returns conflicting reservations (stub for in-memory store)
+func (m *InMemory) CheckConflicts(_ context.Context, project, pathPattern string, exclusive bool) ([]core.ConflictDetail, error) {
 	return nil, nil // In-memory store doesn't track reservations
 }
