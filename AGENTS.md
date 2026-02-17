@@ -257,6 +257,29 @@ Test patterns:
 - `handlers_*_test.go`: httptest.Server integration tests
 - `client_test.go`: Mock server for SDK validation
 
+## Operational Notes
+
+### Router Gap
+- `NewRouter` (messaging only) includes `/api/reservations` routes
+- `NewDomainRouter` includes messaging + domain entity routes but NOT `/api/reservations`
+- Auth bypass: `httptest.NewServer` binds to 127.0.0.1, so `auth.NewKeyring(true, ...)` treats as localhost
+- `DomainService` embeds `*Service`, so one struct handles both messaging + domain ops
+
+### SQLite Gotchas (Go)
+- `":memory:"` with `sql.Open("sqlite", ...)` creates separate DB per connection in pool
+- Concurrent tests need file-backed DB with `db.SetMaxOpenConns(1)` to avoid SQLITE_BUSY
+- PRAGMAs (WAL, busy_timeout) only apply to connection they're run on — useless with pooled connections
+- Production code doesn't set `MaxOpenConns` — potential issue under concurrent load
+
+### Testing Patterns
+- Test helpers: `testEnv` with `newTestEnv(t)` in `internal/http/test_helpers_test.go`
+- Domain CRUD tests use `NewDomainRouter` (no auth needed, localhost bypass)
+- Reservation tests must use `NewRouter` (reservations not in DomainRouter)
+- WS tests use `httpapi.NewRouter(svc, hub.Handler(), auth.Middleware(nil))` + `websocket.Dial`
+- Total: 111 test functions, 0 failures
+- `internal/http`: 75.5%, `internal/ws`: 79.3%, `internal/storage/sqlite`: 67.2%
+- All tests pass with `-race` flag
+
 <!-- auracoil:begin -->
 ## Auracoil Review Notes
 
