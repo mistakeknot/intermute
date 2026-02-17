@@ -148,20 +148,32 @@ func (s *Service) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Service) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
+func (s *Service) handleAgentSubpath(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/agents/")
-	if !strings.HasSuffix(path, "/heartbeat") {
+	path = strings.Trim(path, "/")
+
+	// Parse: "<agent-id>/<action>"
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) != 2 || parts[0] == "" {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	id := strings.TrimSuffix(path, "/heartbeat")
-	id = strings.Trim(id, "/")
-	if id == "" {
-		w.WriteHeader(http.StatusBadRequest)
+	agentID := parts[0]
+	action := parts[1]
+
+	switch action {
+	case "heartbeat":
+		s.handleAgentHeartbeat(w, r, agentID)
+	case "metadata":
+		s.handleAgentMetadata(w, r, agentID)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func (s *Service) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request, agentID string) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -172,11 +184,56 @@ func (s *Service) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		project = info.Project
 	}
 
-	agent, err := s.store.Heartbeat(r.Context(), project, id)
+	agent, err := s.store.Heartbeat(r.Context(), project, agentID)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"agent_id": agent.ID})
+}
+
+type updateMetadataRequest struct {
+	Metadata map[string]string `json:"metadata"`
+}
+
+func (s *Service) handleAgentMetadata(w http.ResponseWriter, r *http.Request, agentID string) {
+	if r.Method != http.MethodPatch {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req updateMetadataRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if len(req.Metadata) == 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "metadata map required"})
+		return
+	}
+
+	agent, err := s.store.UpdateAgentMetadata(r.Context(), agentID, req.Metadata)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(agentJSON{
+		AgentID:      agent.ID,
+		SessionID:    agent.SessionID,
+		Name:         agent.Name,
+		Project:      agent.Project,
+		Capabilities: agent.Capabilities,
+		Metadata:     agent.Metadata,
+		Status:       agent.Status,
+		LastSeen:     agent.LastSeen.Format(time.RFC3339),
+		CreatedAt:    agent.CreatedAt.Format(time.RFC3339),
+	})
 }

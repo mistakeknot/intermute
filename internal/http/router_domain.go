@@ -23,7 +23,7 @@ func NewDomainRouter(svc *DomainService, wsHandler http.Handler, mw func(http.Ha
 
 	// Existing messaging endpoints
 	mux.Handle("/api/agents", wrap(svc.handleAgents))
-	mux.Handle("/api/agents/", wrap(svc.handleAgentHeartbeat))
+	mux.Handle("/api/agents/", wrap(svc.handleAgentSubpath))
 	mux.Handle("/api/messages", wrap(svc.handleSendMessage))
 	mux.Handle("/api/messages/", wrap(svc.handleMessageAction))
 	mux.Handle("/api/inbox/", wrap(svc.handleInbox))

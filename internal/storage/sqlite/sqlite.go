@@ -815,6 +815,78 @@ func (s *Store) ListAgents(_ context.Context, project string) ([]core.Agent, err
 	return out, nil
 }
 
+func (s *Store) UpdateAgentMetadata(_ context.Context, agentID string, meta map[string]string) (core.Agent, error) {
+	now := time.Now().UTC()
+
+	// Read existing metadata
+	var existingMetaJSON string
+	err := s.db.QueryRow(`SELECT metadata_json FROM agents WHERE id=?`, agentID).Scan(&existingMetaJSON)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return core.Agent{}, fmt.Errorf("agent not found")
+		}
+		return core.Agent{}, fmt.Errorf("read metadata: %w", err)
+	}
+
+	// Merge: existing keys preserved, incoming keys overwrite
+	existing := map[string]string{}
+	if err := json.Unmarshal([]byte(existingMetaJSON), &existing); err != nil {
+		existing = map[string]string{}
+	}
+	for k, v := range meta {
+		existing[k] = v
+	}
+
+	mergedJSON, err := json.Marshal(existing)
+	if err != nil {
+		return core.Agent{}, fmt.Errorf("marshal merged metadata: %w", err)
+	}
+
+	// Update metadata + last_seen (free heartbeat)
+	res, err := s.db.Exec(
+		`UPDATE agents SET metadata_json=?, last_seen=? WHERE id=?`,
+		string(mergedJSON), now.Format(time.RFC3339Nano), agentID,
+	)
+	if err != nil {
+		return core.Agent{}, fmt.Errorf("update metadata: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return core.Agent{}, fmt.Errorf("agent not found")
+	}
+
+	// Fetch and return updated agent
+	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen FROM agents WHERE id=?`, agentID)
+	var (
+		id, sessionID, name, proj, capsJSON, metaJSON, status, createdAt, lastSeen string
+	)
+	if err := row.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &createdAt, &lastSeen); err != nil {
+		return core.Agent{}, fmt.Errorf("fetch updated agent: %w", err)
+	}
+	var caps []string
+	if err := json.Unmarshal([]byte(capsJSON), &caps); err != nil {
+		log.Printf("WARN: corrupt capabilities_json for agent %s: %v", agentID, err)
+	}
+	updatedMeta := map[string]string{}
+	if err := json.Unmarshal([]byte(metaJSON), &updatedMeta); err != nil {
+		log.Printf("WARN: corrupt metadata_json for agent %s: %v", agentID, err)
+	}
+	createdAtTime, _ := time.Parse(time.RFC3339Nano, createdAt)
+	lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
+
+	return core.Agent{
+		ID:           id,
+		SessionID:    sessionID,
+		Name:         name,
+		Project:      proj,
+		Capabilities: caps,
+		Metadata:     updatedMeta,
+		Status:       status,
+		CreatedAt:    createdAtTime,
+		LastSeen:     lastSeenTime,
+	}, nil
+}
+
 // migrateMessagesMetadata adds cc_json, bcc_json, subject, importance, ack_required columns to messages table
 func migrateMessagesMetadata(db *sql.DB) error {
 	if !tableExists(db, "messages") {

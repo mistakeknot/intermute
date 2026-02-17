@@ -34,6 +34,8 @@ type Store interface {
 	RecipientStatus(ctx context.Context, project, messageID string) (map[string]*core.RecipientStatus, error)
 	// Inbox counts
 	InboxCounts(ctx context.Context, project, agentID string) (total int, unread int, err error)
+	// Agent metadata merge (PATCH semantics: incoming keys overwrite, absent keys preserved)
+	UpdateAgentMetadata(ctx context.Context, agentID string, meta map[string]string) (core.Agent, error)
 	// File reservations
 	Reserve(ctx context.Context, r core.Reservation) (*core.Reservation, error)
 	GetReservation(ctx context.Context, id string) (*core.Reservation, error)
@@ -265,6 +267,23 @@ func (m *InMemory) RecipientStatus(_ context.Context, project, messageID string)
 func (m *InMemory) InboxCounts(_ context.Context, project, agentID string) (int, int, error) {
 	msgs := m.inbox[project][agentID]
 	return len(msgs), len(msgs), nil // In-memory doesn't track read status, so all are "unread"
+}
+
+// UpdateAgentMetadata merges metadata keys into an existing agent (stub for in-memory store)
+func (m *InMemory) UpdateAgentMetadata(_ context.Context, agentID string, meta map[string]string) (core.Agent, error) {
+	agent, ok := m.agents[agentID]
+	if !ok {
+		return core.Agent{}, fmt.Errorf("agent not found")
+	}
+	if agent.Metadata == nil {
+		agent.Metadata = make(map[string]string)
+	}
+	for k, v := range meta {
+		agent.Metadata[k] = v
+	}
+	agent.LastSeen = time.Now().UTC()
+	m.agents[agentID] = agent
+	return agent, nil
 }
 
 // Reserve creates a file reservation (stub for in-memory store)

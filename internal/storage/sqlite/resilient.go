@@ -111,6 +111,18 @@ func (r *ResilientStore) Heartbeat(ctx context.Context, project, agentID string)
 	return result, err
 }
 
+func (r *ResilientStore) UpdateAgentMetadata(ctx context.Context, agentID string, meta map[string]string) (core.Agent, error) {
+	var result core.Agent
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.UpdateAgentMetadata(ctx, agentID, meta)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
 func (r *ResilientStore) ListAgents(ctx context.Context, project string) ([]core.Agent, error) {
 	var result []core.Agent
 	err := r.cb.Execute(func() error {

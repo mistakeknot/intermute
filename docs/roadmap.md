@@ -9,64 +9,61 @@ intermute is in active MVP-to-RC maturity:
 - Domain APIs for specs/epics/stories/tasks/insights/sessions are available.
 - Auth defaults and bootstrap flows are documented and usable in local development.
 
-## Short-term (now → next quarter)
+## Now (short-term hardening)
 
 1. Production hardening of reliability boundaries
-- Add richer startup diagnostics and startup-time migration verification output.
-- Tighten retry/backoff and circuit breaker observability for storage paths.
-- Improve DB-level retention tooling for events/messages to control file growth.
+- [IMT-N1] **Startup diagnostics and migration verification** — add richer startup output and migration checks.
+- [IMT-N2] **Retry and backoff hardening** — tighten circuit breaker telemetry on storage path failures.
+- [IMT-N3] **DB retention controls** — operational tooling for bounded event/message growth.
 
 2. Operations and governance
-- Add first-class metrics endpoints and structured logs for:
-  - queue/ack/read latency,
-  - reservation conflict rates,
-  - websocket fanout pressure.
-- Clarify admin runbooks for rotating keys and rotating `intermute.keys.yaml`.
-- Add explicit policy docs for backup/restore and disaster recovery for `intermute.db`.
+- [IMT-N4] **Metrics and structured logs** — expose queue/ack/read latency and conflict telemetry.
+- [IMT-N5] **Operations runbooks** — codify key rotation, backup, and disaster-recovery workflows.
+- [IMT-N6] **Observability policies** — document logging and incident guidance for production operators.
 
 3. Feature completeness around conflict semantics
-- Expand reservation responses to include canonical conflict details.
-- Add richer shared-lock policy options for explicit read/write classes.
-- Improve `/api/reservations/check` UX for automated CI/agent decision loops.
+- [IMT-N7] **Canonical conflict responses** — include machine-readable conflict metadata in reservation responses.
+- [IMT-N8] **Read/write policy options** — expose explicit lock classes and conflict precedence.
+- [IMT-N9] **Reservation check UX** — improve endpoint output for CI and agent tooling.
 
-## Mid-term (next quarter → 2 quarters)
+## Next (mid-term maturation)
 
 1. API ergonomics and consistency
-- Add endpoint and payload versioning strategy.
-- Standardize pagination metadata and response envelopes across handlers.
-- Publish an API contract artifact for downstream SDK generators.
+- [IMT-N10] **API versioning strategy** — publish endpoint and payload migration policy.
+- [IMT-N11] **Pagination consistency** — standardize envelopes and metadata across handlers.
+- [IMT-N12] **SDK-ready contracts** — ship a stable contract artifact for client generation.
 
 2. Ecosystem and developer productivity
-- Generate and publish versioned Go client package updates with examples for all domain endpoints.
-- Add local developer fixtures for smoke and compatibility tests.
-- Document recommended deployment topology for multi-service orchestration.
+- [IMT-N13] **Versioned client generation** — publish Go client artifacts with endpoint examples.
+- [IMT-N14] **Developer test fixtures** — create smoke and compatibility fixture suite.
+- [IMT-N15] **Deployment topology guidance** — document recommended multi-service layouts.
 
 3. Service maturity
-- Evaluate pluggable storage backend abstraction beyond single SQLite runtime.
-- Add integration safety checks for high-concurrency multi-project load.
-- Introduce bounded queueing and explicit saturation behavior under pressure.
+- [IMT-N16] **Pluggable storage research** — evaluate backends beyond single-file SQLite.
+- [IMT-N17] **High-concurrency checks** — validate behavior under multi-project contention.
+- [IMT-N18] **Saturation controls** — add bounded queueing behavior under pressure.
 
-## Longer-term (3+ quarters)
+## P2 — Coordination resilience at scale
 
 1. Horizontal scalability planning
-- Assess read replica and partitioned persistence strategies if agent count grows.
-- Add sharding and namespace-aware shippers for very large environments.
+- [IMT-P1] **Read-replica planning** — assess partitioned persistence and replica-based scale.
+- [IMT-P2] **Namespace-aware shippers** — design shippers for large, high-cardinality estates.
 
 2. Advanced coordination primitives
-- Extend reservation to hierarchical path scoping and lock intent metadata.
-- Add conflict prediction endpoints to preflight file plans before work starts.
+- [IMT-P3] **Hierarchical locking** — add path-scoped locks and lock-intent semantics.
+- [IMT-P4] **Preflight conflict prediction** — expose endpoints to validate plans before execution.
 
 3. Governance and compliance
-- Expand audit artifacts for mutation events and project-scoped access patterns.
-- Add signed-operation metadata for stronger traceability.
+- [IMT-P5] **Mutation access audit** — expand traceability for project-scoped operations.
+- [IMT-P6] **Signed operation metadata** — improve provenance for sensitive mutation requests.
 
 ## Backlog candidates (not yet in active plans)
 
-- Full REST OpenAPI v3 publication and generated docs portal.
-- Web dashboard for realtime reservation/thread visualization.
-- Fine-grained RBAC and per-capability authorization.
-- Event retention policies with configurable compaction and archiving.
-- Integration tests that benchmark high-contention reservation behavior.
+- [IMT-P7] **REST v3 governance package** — publish OpenAPI v3 and generated documentation portal.
+- [IMT-P8] **Reservations dashboard** — add visualization for threads and locks in real time.
+- [IMT-P9] **Fine-grained authorization** — per-capability RBAC and scoped keys.
+- [IMT-P10] **Event retention policy control** — configurable compaction, archive, and deletion policies.
+- [IMT-P11] **High-contention benchmark harness** — dedicated load tests for conflicting reservation races.
 
 ## Success criteria for roadmap execution
 
@@ -75,3 +72,9 @@ intermute is in active MVP-to-RC maturity:
 - Measurable reliability gains after retry/circuit-breaker and sweeper hardening.
 - Simpler on-call operation: operators can recover from outages using published runbooks.
 - Stable public contract for clients embedding intermute as orchestration backbone.
+
+## From Interverse Roadmap
+
+Items from the [Interverse roadmap](../../../docs/roadmap.json) that involve this module:
+
+- **iv-jc4j** [Next] Heterogeneous collaboration and routing experiments inspired by SC-MAS/Dr. MAS
