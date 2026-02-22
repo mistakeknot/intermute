@@ -195,6 +195,35 @@ func (c *Client) ListAgents(ctx context.Context, project string) ([]Agent, error
 	return out.Agents, nil
 }
 
+// DiscoverAgents lists agents filtered by capability tags.
+// Capabilities uses OR matching — agents with any of the given capabilities are returned.
+func (c *Client) DiscoverAgents(ctx context.Context, capabilities []string) ([]Agent, error) {
+	values := url.Values{}
+	if c.Project != "" {
+		values.Set("project", c.Project)
+	}
+	if len(capabilities) > 0 {
+		values.Set("capability", strings.Join(capabilities, ","))
+	}
+	endpoint := "/api/agents"
+	if len(values) > 0 {
+		endpoint += "?" + values.Encode()
+	}
+	resp, err := c.get(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("discover agents failed: %d", resp.StatusCode)
+	}
+	var out ListAgentsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Agents, nil
+}
+
 func (c *Client) SendMessage(ctx context.Context, msg Message) (SendResponse, error) {
 	if msg.Project == "" {
 		msg.Project = c.Project

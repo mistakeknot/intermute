@@ -68,7 +68,16 @@ func (s *Service) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	agents, err := s.store.ListAgents(r.Context(), project)
+	var capabilities []string
+	if capParam := r.URL.Query().Get("capability"); capParam != "" {
+		for _, c := range strings.Split(capParam, ",") {
+			if c = strings.TrimSpace(c); c != "" {
+				capabilities = append(capabilities, c)
+			}
+		}
+	}
+
+	agents, err := s.store.ListAgents(r.Context(), project, capabilities)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

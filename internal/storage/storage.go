@@ -27,7 +27,7 @@ type Store interface {
 	ListThreads(ctx context.Context, project, agent string, cursor uint64, limit int) ([]ThreadSummary, error)
 	RegisterAgent(ctx context.Context, agent core.Agent) (core.Agent, error)
 	Heartbeat(ctx context.Context, project, agentID string) (core.Agent, error)
-	ListAgents(ctx context.Context, project string) ([]core.Agent, error)
+	ListAgents(ctx context.Context, project string, capabilities []string) ([]core.Agent, error)
 	// Per-recipient tracking
 	MarkRead(ctx context.Context, project, messageID, agentID string) error
 	MarkAck(ctx context.Context, project, messageID, agentID string) error
@@ -238,14 +238,30 @@ func (m *InMemory) Heartbeat(_ context.Context, project, agentID string) (core.A
 	return agent, nil
 }
 
-func (m *InMemory) ListAgents(_ context.Context, project string) ([]core.Agent, error) {
+func (m *InMemory) ListAgents(_ context.Context, project string, capabilities []string) ([]core.Agent, error) {
 	var out []core.Agent
 	for _, agent := range m.agents {
-		if project == "" || agent.Project == project {
-			out = append(out, agent)
+		if project != "" && agent.Project != project {
+			continue
 		}
+		if len(capabilities) > 0 && !hasAnyCapability(agent.Capabilities, capabilities) {
+			continue
+		}
+		out = append(out, agent)
 	}
 	return out, nil
+}
+
+// hasAnyCapability reports whether agentCaps contains at least one element from queryCaps.
+func hasAnyCapability(agentCaps, queryCaps []string) bool {
+	for _, qc := range queryCaps {
+		for _, ac := range agentCaps {
+			if ac == qc {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // MarkRead marks a message as read by a specific recipient (stub for in-memory store)

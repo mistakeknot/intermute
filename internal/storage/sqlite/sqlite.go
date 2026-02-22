@@ -762,13 +762,29 @@ func (s *Store) Heartbeat(_ context.Context, project, agentID string) (core.Agen
 	}, nil
 }
 
-func (s *Store) ListAgents(_ context.Context, project string) ([]core.Agent, error) {
+func (s *Store) ListAgents(_ context.Context, project string, capabilities []string) ([]core.Agent, error) {
 	query := `SELECT id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen
 		FROM agents`
+	var conditions []string
 	var args []any
 	if project != "" {
-		query += " WHERE project = ?"
+		conditions = append(conditions, "project = ?")
 		args = append(args, project)
+	}
+	if len(capabilities) > 0 {
+		// OR match: agent has any of the requested capabilities
+		// Guard against NULL/empty capabilities_json (legacy agents)
+		capPlaceholders := make([]string, len(capabilities))
+		for i, capability := range capabilities {
+			capPlaceholders[i] = "?"
+			args = append(args, capability)
+		}
+		conditions = append(conditions,
+			fmt.Sprintf("EXISTS (SELECT 1 FROM json_each(CASE WHEN capabilities_json IS NULL OR capabilities_json = '' OR capabilities_json = 'null' THEN '[]' ELSE capabilities_json END) WHERE json_each.value IN (%s))",
+				strings.Join(capPlaceholders, ",")))
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 	query += " ORDER BY last_seen DESC"
 

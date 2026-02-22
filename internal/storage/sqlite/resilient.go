@@ -123,12 +123,12 @@ func (r *ResilientStore) UpdateAgentMetadata(ctx context.Context, agentID string
 	return result, err
 }
 
-func (r *ResilientStore) ListAgents(ctx context.Context, project string) ([]core.Agent, error) {
+func (r *ResilientStore) ListAgents(ctx context.Context, project string, capabilities []string) ([]core.Agent, error) {
 	var result []core.Agent
 	err := r.cb.Execute(func() error {
 		return RetryOnDBLock(func() error {
 			var innerErr error
-			result, innerErr = r.inner.ListAgents(ctx, project)
+			result, innerErr = r.inner.ListAgents(ctx, project, capabilities)
 			return innerErr
 		})
 	})

@@ -58,7 +58,7 @@ func TestSQLiteListAgents(t *testing.T) {
 	}
 
 	// List all agents
-	all, err := st.ListAgents(ctx, "")
+	all, err := st.ListAgents(ctx, "", nil)
 	if err != nil {
 		t.Fatalf("list all: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestSQLiteListAgents(t *testing.T) {
 	}
 
 	// List by project
-	projA, err := st.ListAgents(ctx, "proj-a")
+	projA, err := st.ListAgents(ctx, "proj-a", nil)
 	if err != nil {
 		t.Fatalf("list proj-a: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestSQLiteListAgentsOrderByLastSeen(t *testing.T) {
 	// Heartbeat the first agent to make it more recent
 	_, _ = st.Heartbeat(ctx, "proj", a1.ID)
 
-	agents, err := st.ListAgents(ctx, "proj")
+	agents, err := st.ListAgents(ctx, "proj", nil)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

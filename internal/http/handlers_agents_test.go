@@ -100,6 +100,142 @@ func TestListAgentsProjectFilter(t *testing.T) {
 	}
 }
 
+func TestListAgentsCapabilityFilter(t *testing.T) {
+	svc := NewService(storage.NewInMemory())
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	defer srv.Close()
+
+	// Register agents with capabilities — includes one with empty caps
+	for _, tc := range []struct {
+		name string
+		caps []string
+	}{
+		{"agent-arch", []string{"review:architecture", "review:code"}},
+		{"agent-safety", []string{"review:safety", "review:security"}},
+		{"agent-both", []string{"review:architecture", "review:safety"}},
+		{"agent-nocaps", []string{}},
+	} {
+		payload := map[string]any{"name": tc.name, "project": "proj-a", "capabilities": tc.caps}
+		buf, _ := json.Marshal(payload)
+		resp, err := http.Post(srv.URL+"/api/agents", "application/json", bytes.NewReader(buf))
+		if err != nil {
+			t.Fatalf("register failed: %v", err)
+		}
+		resp.Body.Close()
+	}
+
+	tests := []struct {
+		name     string
+		query    string
+		expected int
+	}{
+		{"single match", "?project=proj-a&capability=review:architecture", 2},
+		{"multi OR match", "?project=proj-a&capability=review:architecture,review:security", 3},
+		{"no match", "?project=proj-a&capability=research:docs", 0},
+		{"no filter returns all", "?project=proj-a", 4},
+		{"trailing comma ignored", "?project=proj-a&capability=review:architecture,", 2},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := http.Get(srv.URL + "/api/agents" + tc.query)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("expected 200, got %d", resp.StatusCode)
+			}
+
+			var result listAgentsResponse
+			if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+				t.Fatalf("decode failed: %v", err)
+			}
+			if len(result.Agents) != tc.expected {
+				t.Fatalf("expected %d agents, got %d", tc.expected, len(result.Agents))
+			}
+		})
+	}
+}
+
+func TestCapabilityDiscoveryEndToEnd(t *testing.T) {
+	svc := NewService(storage.NewInMemory())
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	defer srv.Close()
+
+	// Simulate registration with capabilities (as interlock-register.sh would)
+	agents := []struct {
+		name string
+		caps []string
+	}{
+		{"fd-architecture", []string{"review:architecture", "review:code"}},
+		{"fd-safety", []string{"review:safety", "review:security"}},
+		{"repo-research-analyst", []string{"research:codebase", "research:architecture"}},
+		{"agent-nocaps", nil},
+	}
+
+	for _, a := range agents {
+		payload := map[string]any{
+			"name":         a.name,
+			"project":      "demarch",
+			"capabilities": a.caps,
+		}
+		buf, _ := json.Marshal(payload)
+		resp, err := http.Post(srv.URL+"/api/agents", "application/json", bytes.NewReader(buf))
+		if err != nil {
+			t.Fatalf("register %s failed: %v", a.name, err)
+		}
+		resp.Body.Close()
+	}
+
+	// Query by single capability — only fd-architecture has review:architecture
+	// (repo-research-analyst has research:architecture — different domain prefix)
+	resp, err := http.Get(srv.URL + "/api/agents?project=demarch&capability=review:architecture")
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result listAgentsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if len(result.Agents) != 1 {
+		t.Fatalf("expected 1 agent for review:architecture, got %d", len(result.Agents))
+	}
+	if result.Agents[0].Name != "fd-architecture" {
+		t.Fatalf("expected fd-architecture, got %s", result.Agents[0].Name)
+	}
+
+	// Query by OR across domains
+	resp2, err := http.Get(srv.URL + "/api/agents?project=demarch&capability=review:safety,research:codebase")
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp2.StatusCode)
+	}
+
+	var result2 listAgentsResponse
+	if err := json.NewDecoder(resp2.Body).Decode(&result2); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if len(result2.Agents) != 2 {
+		t.Fatalf("expected 2 agents for safety+codebase, got %d", len(result2.Agents))
+	}
+
+	// Verify capabilities are returned in the response
+	for _, a := range result2.Agents {
+		if len(a.Capabilities) == 0 {
+			t.Errorf("agent %s has no capabilities in response", a.Name)
+		}
+	}
+}
+
 func TestPatchAgentMetadata(t *testing.T) {
 	svc := NewService(storage.NewInMemory())
 	srv := httptest.NewServer(NewRouter(svc, nil, nil))
