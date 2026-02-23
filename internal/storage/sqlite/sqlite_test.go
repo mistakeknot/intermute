@@ -103,6 +103,77 @@ func TestSQLiteListAgentsOrderByLastSeen(t *testing.T) {
 	}
 }
 
+func TestSQLiteListAgentsByCapability(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	// Register agents with different capabilities
+	_, err := st.RegisterAgent(ctx, core.Agent{
+		Name: "reviewer", Project: "proj", Status: "active",
+		Capabilities: []string{"review:architecture", "review:safety"},
+	})
+	if err != nil {
+		t.Fatalf("register reviewer: %v", err)
+	}
+	_, err = st.RegisterAgent(ctx, core.Agent{
+		Name: "researcher", Project: "proj", Status: "active",
+		Capabilities: []string{"research:docs", "research:codebase"},
+	})
+	if err != nil {
+		t.Fatalf("register researcher: %v", err)
+	}
+	_, err = st.RegisterAgent(ctx, core.Agent{
+		Name: "plain", Project: "proj", Status: "active",
+	})
+	if err != nil {
+		t.Fatalf("register plain: %v", err)
+	}
+
+	// Filter by single capability
+	reviewers, err := st.ListAgents(ctx, "proj", []string{"review:architecture"})
+	if err != nil {
+		t.Fatalf("list by capability: %v", err)
+	}
+	if len(reviewers) != 1 || reviewers[0].Name != "reviewer" {
+		t.Fatalf("expected [reviewer], got %v", agentNames(reviewers))
+	}
+
+	// OR match: any of the requested capabilities
+	mixed, err := st.ListAgents(ctx, "proj", []string{"review:safety", "research:docs"})
+	if err != nil {
+		t.Fatalf("list by OR capabilities: %v", err)
+	}
+	if len(mixed) != 2 {
+		t.Fatalf("expected 2 agents for OR match, got %d: %v", len(mixed), agentNames(mixed))
+	}
+
+	// No match
+	none, err := st.ListAgents(ctx, "proj", []string{"nonexistent:capability"})
+	if err != nil {
+		t.Fatalf("list nonexistent: %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("expected 0 agents, got %d", len(none))
+	}
+
+	// Nil capabilities returns all (no filter)
+	all, err := st.ListAgents(ctx, "proj", nil)
+	if err != nil {
+		t.Fatalf("list all: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("expected 3 agents (no filter), got %d", len(all))
+	}
+}
+
+func agentNames(agents []core.Agent) []string {
+	names := make([]string, len(agents))
+	for i, a := range agents {
+		names[i] = a.Name
+	}
+	return names
+}
+
 func TestSQLiteThreadMessages(t *testing.T) {
 	ctx := context.Background()
 	st := NewSQLiteTest(t)
