@@ -5,3 +5,5 @@
 # Auracoil
 .auracoil/cache/
 .auracoil/oracle/
+
+.beads/
