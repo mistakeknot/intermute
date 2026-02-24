@@ -1,8 +1,8 @@
 # intermute
 
-Multi-agent coordination service — the backend that makes agents aware of each other.
+Multi-agent coordination service: the backend that makes agents aware of each other.
 
-## What This Does
+## What this does
 
 When multiple agents work on the same project, they need to know who's editing what, pass messages, and avoid stepping on each other's changes. intermute provides the coordination layer: agent registration with heartbeats, message routing, and file reservation tracking. It's a Go service backed by SQLite, exposing a REST API with WebSocket real-time delivery.
 
@@ -31,11 +31,11 @@ Or as a systemd service for persistent operation.
 
 ## Auth
 
-Localhost requests are allowed without authentication — useful for single-machine multi-agent setups. Non-localhost requires `Authorization: Bearer <key>` with a project scope.
+Localhost requests are allowed without authentication: useful for single-machine multi-agent setups. Non-localhost requires `Authorization: Bearer <key>` with a project scope.
 
 Keys are loaded from `INTERMUTE_KEYS_FILE` or `./intermute.keys.yaml`. If neither exists, the server bootstraps a dev key on startup.
 
-## Client Environment
+## Client environment
 
 ```bash
 INTERMUTE_URL=http://localhost:7338
