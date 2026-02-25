@@ -77,6 +77,9 @@ func applySchema(db *sql.DB) error {
 	if err := migrateAgentSessionID(db); err != nil {
 		return err
 	}
+	if err := migrateContactPolicy(db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -88,6 +91,32 @@ func migrateAgentSessionID(db *sql.DB) error {
 		ON agents(session_id) WHERE session_id IS NOT NULL AND session_id != ''`)
 	if err != nil {
 		return fmt.Errorf("create session_id index: %w", err)
+	}
+	return nil
+}
+
+func migrateContactPolicy(db *sql.DB) error {
+	if !tableExists(db, "agents") {
+		return nil
+	}
+	if !tableHasColumn(db, "agents", "contact_policy") {
+		if _, err := db.Exec(`ALTER TABLE agents ADD COLUMN contact_policy TEXT NOT NULL DEFAULT 'open'`); err != nil {
+			return fmt.Errorf("add contact_policy column: %w", err)
+		}
+	}
+	// Create agent_contacts table for contacts_only policy whitelist
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS agent_contacts (
+		agent_id TEXT NOT NULL,
+		contact_agent_id TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		PRIMARY KEY (agent_id, contact_agent_id)
+	)`)
+	if err != nil {
+		return fmt.Errorf("create agent_contacts: %w", err)
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_contacts_agent ON agent_contacts(agent_id)`)
+	if err != nil {
+		return fmt.Errorf("create contacts index: %w", err)
 	}
 	return nil
 }
@@ -658,9 +687,9 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 			}
 			// Reuse the existing agent: update its fields, keep its ID
 			if _, err := tx.Exec(
-				`UPDATE agents SET name=?, capabilities_json=?, metadata_json=?, status=?, last_seen=? WHERE id=?`,
+				`UPDATE agents SET name=?, capabilities_json=?, metadata_json=?, status=?, contact_policy=?, last_seen=? WHERE id=?`,
 				agent.Name, string(capsJSON), string(metaJSON), agent.Status,
-				agent.LastSeen.Format(time.RFC3339Nano), existingID,
+				string(agent.ContactPolicy), agent.LastSeen.Format(time.RFC3339Nano), existingID,
 			); err != nil {
 				return core.Agent{}, fmt.Errorf("reuse agent: %w", err)
 			}
@@ -678,10 +707,10 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 			agent.ID = uuid.NewString()
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO agents (id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO agents (id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			agent.ID, agent.SessionID, agent.Name, agent.Project, string(capsJSON), string(metaJSON), agent.Status,
-			agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
+			string(agent.ContactPolicy), agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
 		); err != nil {
 			return core.Agent{}, fmt.Errorf("register agent: %w", err)
 		}
@@ -699,12 +728,13 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 		agent.SessionID = uuid.NewString()
 	}
 	if _, err := s.db.Exec(
-		`INSERT INTO agents (id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO agents (id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, name=excluded.name, project=excluded.project,
-		 capabilities_json=excluded.capabilities_json, metadata_json=excluded.metadata_json, status=excluded.status, last_seen=excluded.last_seen`,
+		 capabilities_json=excluded.capabilities_json, metadata_json=excluded.metadata_json, status=excluded.status,
+		 contact_policy=excluded.contact_policy, last_seen=excluded.last_seen`,
 		agent.ID, agent.SessionID, agent.Name, agent.Project, string(capsJSON), string(metaJSON), agent.Status,
-		agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
+		string(agent.ContactPolicy), agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
 	); err != nil {
 		return core.Agent{}, fmt.Errorf("register agent: %w", err)
 	}
@@ -731,11 +761,11 @@ func (s *Store) Heartbeat(_ context.Context, project, agentID string) (core.Agen
 		return core.Agent{}, fmt.Errorf("agent not found")
 	}
 
-	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen FROM agents WHERE id=?`, agentID)
+	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen FROM agents WHERE id=?`, agentID)
 	var (
-		id, sessionID, name, proj, capsJSON, metaJSON, status, createdAt, lastSeen string
+		id, sessionID, name, proj, capsJSON, metaJSON, status, contactPolicy, createdAt, lastSeen string
 	)
-	if err := row.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &createdAt, &lastSeen); err != nil {
+	if err := row.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &contactPolicy, &createdAt, &lastSeen); err != nil {
 		return core.Agent{}, fmt.Errorf("heartbeat fetch: %w", err)
 	}
 	var caps []string
@@ -750,20 +780,21 @@ func (s *Store) Heartbeat(_ context.Context, project, agentID string) (core.Agen
 	lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
 
 	return core.Agent{
-		ID:           id,
-		SessionID:    sessionID,
-		Name:         name,
-		Project:      proj,
-		Capabilities: caps,
-		Metadata:     meta,
-		Status:       status,
-		CreatedAt:    createdAtTime,
-		LastSeen:     lastSeenTime,
+		ID:            id,
+		SessionID:     sessionID,
+		Name:          name,
+		Project:       proj,
+		Capabilities:  caps,
+		Metadata:      meta,
+		Status:        status,
+		ContactPolicy: core.ContactPolicy(contactPolicy),
+		CreatedAt:     createdAtTime,
+		LastSeen:      lastSeenTime,
 	}, nil
 }
 
 func (s *Store) ListAgents(_ context.Context, project string, capabilities []string) ([]core.Agent, error) {
-	query := `SELECT id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen
+	query := `SELECT id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen
 		FROM agents`
 	var conditions []string
 	var args []any
@@ -797,9 +828,9 @@ func (s *Store) ListAgents(_ context.Context, project string, capabilities []str
 	var out []core.Agent
 	for rows.Next() {
 		var (
-			id, sessionID, name, proj, capsJSON, metaJSON, status, createdAt, lastSeen string
+			id, sessionID, name, proj, capsJSON, metaJSON, status, contactPolicy, createdAt, lastSeen string
 		)
-		if err := rows.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &createdAt, &lastSeen); err != nil {
+		if err := rows.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &contactPolicy, &createdAt, &lastSeen); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		var caps []string
@@ -814,15 +845,16 @@ func (s *Store) ListAgents(_ context.Context, project string, capabilities []str
 		lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
 
 		out = append(out, core.Agent{
-			ID:           id,
-			SessionID:    sessionID,
-			Name:         name,
-			Project:      proj,
-			Capabilities: caps,
-			Metadata:     meta,
-			Status:       status,
-			CreatedAt:    createdAtTime,
-			LastSeen:     lastSeenTime,
+			ID:            id,
+			SessionID:     sessionID,
+			Name:          name,
+			Project:       proj,
+			Capabilities:  caps,
+			Metadata:      meta,
+			Status:        status,
+			ContactPolicy: core.ContactPolicy(contactPolicy),
+			CreatedAt:     createdAtTime,
+			LastSeen:      lastSeenTime,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -872,11 +904,11 @@ func (s *Store) UpdateAgentMetadata(_ context.Context, agentID string, meta map[
 	}
 
 	// Fetch and return updated agent
-	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, created_at, last_seen FROM agents WHERE id=?`, agentID)
+	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen FROM agents WHERE id=?`, agentID)
 	var (
-		id, sessionID, name, proj, capsJSON, metaJSON, status, createdAt, lastSeen string
+		id, sessionID, name, proj, capsJSON, metaJSON, status, contactPolicy, createdAt, lastSeen string
 	)
-	if err := row.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &createdAt, &lastSeen); err != nil {
+	if err := row.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &contactPolicy, &createdAt, &lastSeen); err != nil {
 		return core.Agent{}, fmt.Errorf("fetch updated agent: %w", err)
 	}
 	var caps []string
@@ -891,16 +923,164 @@ func (s *Store) UpdateAgentMetadata(_ context.Context, agentID string, meta map[
 	lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
 
 	return core.Agent{
-		ID:           id,
-		SessionID:    sessionID,
-		Name:         name,
-		Project:      proj,
-		Capabilities: caps,
-		Metadata:     updatedMeta,
-		Status:       status,
-		CreatedAt:    createdAtTime,
-		LastSeen:     lastSeenTime,
+		ID:            id,
+		SessionID:     sessionID,
+		Name:          name,
+		Project:       proj,
+		Capabilities:  caps,
+		Metadata:      updatedMeta,
+		Status:        status,
+		ContactPolicy: core.ContactPolicy(contactPolicy),
+		CreatedAt:     createdAtTime,
+		LastSeen:      lastSeenTime,
 	}, nil
+}
+
+// --- Contact policy methods ---
+
+func (s *Store) SetContactPolicy(_ context.Context, agentID string, policy core.ContactPolicy) error {
+	res, err := s.db.Exec(`UPDATE agents SET contact_policy=? WHERE id=?`, string(policy), agentID)
+	if err != nil {
+		return fmt.Errorf("set contact policy: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("agent not found")
+	}
+	return nil
+}
+
+func (s *Store) GetContactPolicy(_ context.Context, agentID string) (core.ContactPolicy, error) {
+	var policy string
+	err := s.db.QueryRow(`SELECT contact_policy FROM agents WHERE id=?`, agentID).Scan(&policy)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return core.PolicyOpen, nil
+		}
+		return core.PolicyOpen, fmt.Errorf("get contact policy: %w", err)
+	}
+	if policy == "" {
+		return core.PolicyOpen, nil
+	}
+	return core.ContactPolicy(policy), nil
+}
+
+func (s *Store) AddContact(_ context.Context, agentID, contactAgentID string) error {
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO agent_contacts (agent_id, contact_agent_id, created_at) VALUES (?, ?, ?)`,
+		agentID, contactAgentID, time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("add contact: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) RemoveContact(_ context.Context, agentID, contactAgentID string) error {
+	_, err := s.db.Exec(`DELETE FROM agent_contacts WHERE agent_id=? AND contact_agent_id=?`, agentID, contactAgentID)
+	if err != nil {
+		return fmt.Errorf("remove contact: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListContacts(_ context.Context, agentID string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT contact_agent_id FROM agent_contacts WHERE agent_id=?`, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("list contacts: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var contact string
+		if err := rows.Scan(&contact); err != nil {
+			return nil, fmt.Errorf("scan contact: %w", err)
+		}
+		out = append(out, contact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("contacts rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Store) IsContact(_ context.Context, agentID, senderID string) (bool, error) {
+	var exists int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM agent_contacts WHERE agent_id=? AND contact_agent_id=? LIMIT 1`,
+		agentID, senderID,
+	).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, fmt.Errorf("is contact: %w", err)
+	}
+	return true, nil
+}
+
+func (s *Store) HasReservationOverlap(_ context.Context, project, agentA, agentB string) (bool, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	// Fetch active reservations for both agents
+	reservationsA, err := s.activeReservationPatterns(project, agentA, now)
+	if err != nil {
+		return false, err
+	}
+	if len(reservationsA) == 0 {
+		return false, nil
+	}
+	reservationsB, err := s.activeReservationPatterns(project, agentB, now)
+	if err != nil {
+		return false, err
+	}
+	// Check pairwise overlap using existing glob package
+	for _, patA := range reservationsA {
+		for _, patB := range reservationsB {
+			if overlaps, err := glob.PatternsOverlap(patA, patB); err == nil && overlaps {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (s *Store) activeReservationPatterns(project, agentID, now string) ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT path_pattern FROM file_reservations
+		 WHERE project=? AND agent_id=? AND released_at IS NULL AND expires_at > ?`,
+		project, agentID, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("reservation patterns: %w", err)
+	}
+	defer rows.Close()
+	var patterns []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scan pattern: %w", err)
+		}
+		patterns = append(patterns, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("patterns rows: %w", err)
+	}
+	return patterns, nil
+}
+
+func (s *Store) IsThreadParticipant(_ context.Context, project, threadID, agent string) (bool, error) {
+	var exists int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM thread_index WHERE project=? AND thread_id=? AND agent=? LIMIT 1`,
+		project, threadID, agent,
+	).Scan(&exists)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, fmt.Errorf("is thread participant: %w", err)
+	}
+	return true, nil
 }
 
 // migrateMessagesMetadata adds cc_json, bcc_json, subject, importance, ack_required columns to messages table

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -27,8 +28,14 @@ type sendMessageRequest struct {
 }
 
 type sendMessageResponse struct {
-	MessageID string `json:"message_id"`
-	Cursor    uint64 `json:"cursor"`
+	MessageID string   `json:"message_id"`
+	Cursor    uint64   `json:"cursor"`
+	Denied    []string `json:"denied,omitempty"`
+}
+
+type policyDeniedResponse struct {
+	Error  string   `json:"error"`
+	Denied []string `json:"denied"`
 }
 
 type apiMessage struct {
@@ -83,21 +90,39 @@ func (s *Service) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		msgID = uuid.NewString()
 	}
 	project := strings.TrimSpace(req.Project)
+	// Enforce contact policies on all recipient lists
+	ctx := r.Context()
+	allowedTo, deniedTo := s.filterByPolicy(ctx, project, req.From, req.ThreadID, req.To)
+	allowedCC, deniedCC := s.filterByPolicy(ctx, project, req.From, req.ThreadID, req.CC)
+	allowedBCC, deniedBCC := s.filterByPolicy(ctx, project, req.From, req.ThreadID, req.BCC)
+	allDenied := append(append(deniedTo, deniedCC...), deniedBCC...)
+
+	// If ALL recipients denied, return 403
+	if len(allowedTo) == 0 && len(allowedCC) == 0 && len(allowedBCC) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(policyDeniedResponse{
+			Error:  "policy_denied",
+			Denied: allDenied,
+		})
+		return
+	}
+
 	msg := core.Message{
 		ID:          msgID,
 		ThreadID:    req.ThreadID,
 		Project:     project,
 		From:        req.From,
-		To:          req.To,
-		CC:          req.CC,
-		BCC:         req.BCC,
+		To:          allowedTo,
+		CC:          allowedCC,
+		BCC:         allowedBCC,
 		Subject:     req.Subject,
 		Body:        req.Body,
 		Importance:  req.Importance,
 		AckRequired: req.AckRequired,
 		CreatedAt:   time.Now().UTC(),
 	}
-	cursor, err := s.store.AppendEvent(r.Context(), core.Event{Type: core.EventMessageCreated, Project: project, Message: msg})
+	cursor, err := s.store.AppendEvent(ctx, core.Event{Type: core.EventMessageCreated, Project: project, Message: msg})
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
@@ -114,7 +139,67 @@ func (s *Service) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(sendMessageResponse{MessageID: msgID, Cursor: cursor})
+	_ = json.NewEncoder(w).Encode(sendMessageResponse{MessageID: msgID, Cursor: cursor, Denied: allDenied})
+}
+
+// filterByPolicy checks each recipient's contact policy and returns allowed/denied lists.
+func (s *Service) filterByPolicy(ctx context.Context, project, sender, threadID string, recipients []string) (allowed, denied []string) {
+	for _, recipient := range recipients {
+		policy, err := s.store.GetContactPolicy(ctx, recipient)
+		if err != nil {
+			// On error, default to open (don't block delivery on lookup failure)
+			allowed = append(allowed, recipient)
+			continue
+		}
+		switch policy {
+		case core.PolicyOpen, "":
+			allowed = append(allowed, recipient)
+		case core.PolicyBlockAll:
+			denied = append(denied, recipient)
+		case core.PolicyContactsOnly:
+			if s.senderAllowed(ctx, project, sender, recipient, threadID) {
+				allowed = append(allowed, recipient)
+			} else {
+				denied = append(denied, recipient)
+			}
+		case core.PolicyAuto:
+			if s.senderAllowedAuto(ctx, project, sender, recipient, threadID) {
+				allowed = append(allowed, recipient)
+			} else {
+				denied = append(denied, recipient)
+			}
+		default:
+			// Unknown policy — default open
+			allowed = append(allowed, recipient)
+		}
+	}
+	return
+}
+
+// senderAllowed checks if sender passes contacts_only policy for recipient.
+func (s *Service) senderAllowed(ctx context.Context, project, sender, recipient, threadID string) bool {
+	// Check explicit contact list
+	if ok, err := s.store.IsContact(ctx, recipient, sender); err == nil && ok {
+		return true
+	}
+	// Thread participant exception (but not for block_all, which is handled above)
+	if threadID != "" {
+		if ok, err := s.store.IsThreadParticipant(ctx, project, threadID, sender); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
+// senderAllowedAuto checks if sender passes auto policy for recipient.
+// Auto allows: file reservation overlap OR contact list OR thread participant.
+func (s *Service) senderAllowedAuto(ctx context.Context, project, sender, recipient, threadID string) bool {
+	// Check file reservation overlap first (the defining feature of auto mode)
+	if ok, err := s.store.HasReservationOverlap(ctx, project, recipient, sender); err == nil && ok {
+		return true
+	}
+	// Fall through to contacts_only checks
+	return s.senderAllowed(ctx, project, sender, recipient, threadID)
 }
 
 func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {

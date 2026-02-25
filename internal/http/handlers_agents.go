@@ -175,6 +175,8 @@ func (s *Service) handleAgentSubpath(w http.ResponseWriter, r *http.Request) {
 		s.handleAgentHeartbeat(w, r, agentID)
 	case "metadata":
 		s.handleAgentMetadata(w, r, agentID)
+	case "policy":
+		s.handleAgentPolicy(w, r, agentID)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
@@ -245,4 +247,50 @@ func (s *Service) handleAgentMetadata(w http.ResponseWriter, r *http.Request, ag
 		LastSeen:     agent.LastSeen.Format(time.RFC3339),
 		CreatedAt:    agent.CreatedAt.Format(time.RFC3339),
 	})
+}
+
+type setPolicyRequest struct {
+	Policy string `json:"policy"`
+}
+
+type getPolicyResponse struct {
+	AgentID string `json:"agent_id"`
+	Policy  string `json:"policy"`
+}
+
+func (s *Service) handleAgentPolicy(w http.ResponseWriter, r *http.Request, agentID string) {
+	switch r.Method {
+	case http.MethodGet:
+		policy, err := s.store.GetContactPolicy(r.Context(), agentID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(getPolicyResponse{AgentID: agentID, Policy: string(policy)})
+
+	case http.MethodPost:
+		var req setPolicyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if !core.ValidContactPolicy(req.Policy) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "invalid policy: must be open, auto, contacts_only, or block_all",
+			})
+			return
+		}
+		if err := s.store.SetContactPolicy(r.Context(), agentID, core.ContactPolicy(req.Policy)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(getPolicyResponse{AgentID: agentID, Policy: req.Policy})
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }

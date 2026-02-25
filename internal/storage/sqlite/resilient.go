@@ -232,6 +232,94 @@ func (r *ResilientStore) AgentReservations(ctx context.Context, agentID string) 
 }
 
 // ---------------------------------------------------------------------------
+// Contact policy methods
+// ---------------------------------------------------------------------------
+
+func (r *ResilientStore) SetContactPolicy(ctx context.Context, agentID string, policy core.ContactPolicy) error {
+	return r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			return r.inner.SetContactPolicy(ctx, agentID, policy)
+		})
+	})
+}
+
+func (r *ResilientStore) GetContactPolicy(ctx context.Context, agentID string) (core.ContactPolicy, error) {
+	var result core.ContactPolicy
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.GetContactPolicy(ctx, agentID)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+func (r *ResilientStore) AddContact(ctx context.Context, agentID, contactAgentID string) error {
+	return r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			return r.inner.AddContact(ctx, agentID, contactAgentID)
+		})
+	})
+}
+
+func (r *ResilientStore) RemoveContact(ctx context.Context, agentID, contactAgentID string) error {
+	return r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			return r.inner.RemoveContact(ctx, agentID, contactAgentID)
+		})
+	})
+}
+
+func (r *ResilientStore) ListContacts(ctx context.Context, agentID string) ([]string, error) {
+	var result []string
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.ListContacts(ctx, agentID)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+func (r *ResilientStore) IsContact(ctx context.Context, agentID, senderID string) (bool, error) {
+	var result bool
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.IsContact(ctx, agentID, senderID)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+func (r *ResilientStore) HasReservationOverlap(ctx context.Context, project, agentA, agentB string) (bool, error) {
+	var result bool
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.HasReservationOverlap(ctx, project, agentA, agentB)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+func (r *ResilientStore) IsThreadParticipant(ctx context.Context, project, threadID, agent string) (bool, error) {
+	var result bool
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.IsThreadParticipant(ctx, project, threadID, agent)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+// ---------------------------------------------------------------------------
 // DomainStore interface methods
 // ---------------------------------------------------------------------------
 

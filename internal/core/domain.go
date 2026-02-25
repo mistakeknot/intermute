@@ -18,6 +18,28 @@ var ErrActiveSessionConflict = errors.New("active session conflict: session_id i
 // allowing session_id reuse.
 const SessionStaleThreshold = 5 * time.Minute
 
+// ErrPolicyDenied is returned when a message is rejected by the recipient's contact policy.
+var ErrPolicyDenied = errors.New("contact policy denied")
+
+// ContactPolicy controls who can send messages to an agent.
+type ContactPolicy string
+
+const (
+	PolicyOpen         ContactPolicy = "open"          // Accept from anyone (default)
+	PolicyAuto         ContactPolicy = "auto"          // Auto-allow agents with overlapping file reservations
+	PolicyContactsOnly ContactPolicy = "contacts_only" // Explicit whitelist only
+	PolicyBlockAll     ContactPolicy = "block_all"     // Reject everything
+)
+
+// ValidContactPolicy returns true if s is a recognized policy level.
+func ValidContactPolicy(s string) bool {
+	switch ContactPolicy(s) {
+	case PolicyOpen, PolicyAuto, PolicyContactsOnly, PolicyBlockAll:
+		return true
+	}
+	return false
+}
+
 // Domain event types for Autarch domain entities
 const (
 	// Spec events

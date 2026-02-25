@@ -36,6 +36,15 @@ type Store interface {
 	InboxCounts(ctx context.Context, project, agentID string) (total int, unread int, err error)
 	// Agent metadata merge (PATCH semantics: incoming keys overwrite, absent keys preserved)
 	UpdateAgentMetadata(ctx context.Context, agentID string, meta map[string]string) (core.Agent, error)
+	// Contact policy
+	SetContactPolicy(ctx context.Context, agentID string, policy core.ContactPolicy) error
+	GetContactPolicy(ctx context.Context, agentID string) (core.ContactPolicy, error)
+	AddContact(ctx context.Context, agentID, contactAgentID string) error
+	RemoveContact(ctx context.Context, agentID, contactAgentID string) error
+	ListContacts(ctx context.Context, agentID string) ([]string, error)
+	IsContact(ctx context.Context, agentID, senderID string) (bool, error)
+	HasReservationOverlap(ctx context.Context, project, agentA, agentB string) (bool, error)
+	IsThreadParticipant(ctx context.Context, project, threadID, agent string) (bool, error)
 	// File reservations
 	Reserve(ctx context.Context, r core.Reservation) (*core.Reservation, error)
 	GetReservation(ctx context.Context, id string) (*core.Reservation, error)
@@ -300,6 +309,60 @@ func (m *InMemory) UpdateAgentMetadata(_ context.Context, agentID string, meta m
 	agent.LastSeen = time.Now().UTC()
 	m.agents[agentID] = agent
 	return agent, nil
+}
+
+// SetContactPolicy sets agent policy (stub for in-memory store)
+func (m *InMemory) SetContactPolicy(_ context.Context, agentID string, policy core.ContactPolicy) error {
+	agent, ok := m.agents[agentID]
+	if !ok {
+		return fmt.Errorf("agent not found")
+	}
+	agent.ContactPolicy = policy
+	m.agents[agentID] = agent
+	return nil
+}
+
+// GetContactPolicy returns agent policy (stub for in-memory store)
+func (m *InMemory) GetContactPolicy(_ context.Context, agentID string) (core.ContactPolicy, error) {
+	agent, ok := m.agents[agentID]
+	if !ok {
+		return core.PolicyOpen, nil
+	}
+	if agent.ContactPolicy == "" {
+		return core.PolicyOpen, nil
+	}
+	return agent.ContactPolicy, nil
+}
+
+// AddContact adds a contact (stub for in-memory store)
+func (m *InMemory) AddContact(_ context.Context, _, _ string) error { return nil }
+
+// RemoveContact removes a contact (stub for in-memory store)
+func (m *InMemory) RemoveContact(_ context.Context, _, _ string) error { return nil }
+
+// ListContacts lists contacts (stub for in-memory store)
+func (m *InMemory) ListContacts(_ context.Context, _ string) ([]string, error) { return nil, nil }
+
+// IsContact checks contact relationship (stub for in-memory store)
+func (m *InMemory) IsContact(_ context.Context, _, _ string) (bool, error) { return false, nil }
+
+// HasReservationOverlap checks file reservation overlap (stub for in-memory store)
+func (m *InMemory) HasReservationOverlap(_ context.Context, _, _, _ string) (bool, error) {
+	return false, nil
+}
+
+// IsThreadParticipant checks thread participation (stub for in-memory store)
+func (m *InMemory) IsThreadParticipant(_ context.Context, project, threadID, agent string) (bool, error) {
+	threads := m.threadIndex[project]
+	if threads == nil {
+		return false, nil
+	}
+	agents := threads[threadID]
+	if agents == nil {
+		return false, nil
+	}
+	_, ok := agents[agent]
+	return ok, nil
 }
 
 // Reserve creates a file reservation (stub for in-memory store)

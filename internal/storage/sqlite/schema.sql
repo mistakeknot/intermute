@@ -73,9 +73,19 @@ CREATE TABLE IF NOT EXISTS agents (
   capabilities_json TEXT,
   metadata_json TEXT,
   status TEXT,
+  contact_policy TEXT NOT NULL DEFAULT 'open',
   created_at TEXT NOT NULL,
   last_seen TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS agent_contacts (
+  agent_id TEXT NOT NULL,
+  contact_agent_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (agent_id, contact_agent_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_contacts_agent ON agent_contacts(agent_id);
 
 CREATE TABLE IF NOT EXISTS thread_index (
   project TEXT NOT NULL DEFAULT '',
