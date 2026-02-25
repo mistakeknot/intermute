@@ -319,6 +319,18 @@ func (r *ResilientStore) IsThreadParticipant(ctx context.Context, project, threa
 	return result, err
 }
 
+func (r *ResilientStore) TopicMessages(ctx context.Context, project, topic string, cursor uint64, limit int) ([]core.Message, error) {
+	var result []core.Message
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.TopicMessages(ctx, project, topic, cursor, limit)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
 // ---------------------------------------------------------------------------
 // DomainStore interface methods
 // ---------------------------------------------------------------------------

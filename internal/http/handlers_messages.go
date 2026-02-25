@@ -22,6 +22,7 @@ type sendMessageRequest struct {
 	CC          []string `json:"cc,omitempty"`
 	BCC         []string `json:"bcc,omitempty"`
 	Subject     string   `json:"subject,omitempty"`
+	Topic       string   `json:"topic,omitempty"`
 	Body        string   `json:"body"`
 	Importance  string   `json:"importance,omitempty"`
 	AckRequired bool     `json:"ack_required,omitempty"`
@@ -47,6 +48,7 @@ type apiMessage struct {
 	CC          []string `json:"cc,omitempty"`
 	BCC         []string `json:"bcc,omitempty"`
 	Subject     string   `json:"subject,omitempty"`
+	Topic       string   `json:"topic,omitempty"`
 	Body        string   `json:"body"`
 	Importance  string   `json:"importance,omitempty"`
 	AckRequired bool     `json:"ack_required,omitempty"`
@@ -117,6 +119,7 @@ func (s *Service) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		CC:          allowedCC,
 		BCC:         allowedBCC,
 		Subject:     req.Subject,
+		Topic:       req.Topic,
 		Body:        req.Body,
 		Importance:  req.Importance,
 		AckRequired: req.AckRequired,
@@ -255,6 +258,7 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 			CC:          m.CC,
 			BCC:         m.BCC,
 			Subject:     m.Subject,
+			Topic:       m.Topic,
 			Body:        m.Body,
 			Importance:  m.Importance,
 			AckRequired: m.AckRequired,
@@ -365,4 +369,72 @@ func (s *Service) handleMessageAction(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Service) handleTopicMessages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	// Path: /api/topics/{project}/{topic}
+	path := strings.TrimPrefix(r.URL.Path, "/api/topics/")
+	parts := strings.SplitN(strings.Trim(path, "/"), "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	project := parts[0]
+	topic := parts[1]
+
+	info, _ := auth.FromContext(r.Context())
+	if info.Mode == auth.ModeAPIKey {
+		if project != info.Project {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+	}
+
+	cursor := uint64(0)
+	if v := r.URL.Query().Get("since_cursor"); v != "" {
+		if parsed, err := strconv.ParseUint(v, 10, 64); err == nil {
+			cursor = parsed
+		}
+	}
+	var limit int
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	msgs, err := s.store.TopicMessages(r.Context(), project, topic, cursor, limit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	lastCursor := cursor
+	if len(msgs) > 0 {
+		lastCursor = msgs[len(msgs)-1].Cursor
+	}
+	apiMsgs := make([]apiMessage, 0, len(msgs))
+	for _, m := range msgs {
+		apiMsgs = append(apiMsgs, apiMessage{
+			ID:          m.ID,
+			ThreadID:    m.ThreadID,
+			Project:     m.Project,
+			From:        m.From,
+			To:          m.To,
+			CC:          m.CC,
+			BCC:         m.BCC,
+			Subject:     m.Subject,
+			Topic:       m.Topic,
+			Body:        m.Body,
+			Importance:  m.Importance,
+			AckRequired: m.AckRequired,
+			CreatedAt:   m.CreatedAt.Format(time.RFC3339Nano),
+			Cursor:      m.Cursor,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(inboxResponse{Messages: apiMsgs, Cursor: lastCursor})
 }

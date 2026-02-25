@@ -24,9 +24,12 @@ CREATE TABLE IF NOT EXISTS messages (
   body TEXT,
   importance TEXT,
   ack_required INTEGER NOT NULL DEFAULT 0,
+  topic TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   PRIMARY KEY (project, message_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_messages_project_topic ON messages(project, topic);
 
 CREATE TABLE IF NOT EXISTS inbox_index (
   project TEXT NOT NULL DEFAULT '',

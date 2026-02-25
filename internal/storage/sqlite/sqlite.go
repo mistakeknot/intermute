@@ -80,6 +80,25 @@ func applySchema(db *sql.DB) error {
 	if err := migrateContactPolicy(db); err != nil {
 		return err
 	}
+	if err := migrateTopicColumn(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func migrateTopicColumn(db *sql.DB) error {
+	if !tableExists(db, "messages") {
+		return nil
+	}
+	if !tableHasColumn(db, "messages", "topic") {
+		if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN topic TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add topic column: %w", err)
+		}
+	}
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_messages_project_topic ON messages(project, topic)`)
+	if err != nil {
+		return fmt.Errorf("create topic index: %w", err)
+	}
 	return nil
 }
 
@@ -243,11 +262,12 @@ func (s *Store) upsertMessageTx(tx *sql.Tx, project string, msg core.Message) er
 	if msg.AckRequired {
 		ackRequired = 1
 	}
+	topic := strings.ToLower(strings.TrimSpace(msg.Topic))
 	if _, err := tx.Exec(
-		`INSERT INTO messages (project, message_id, thread_id, from_agent, to_json, cc_json, bcc_json, subject, body, importance, ack_required, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(project, message_id) DO UPDATE SET thread_id=excluded.thread_id, from_agent=excluded.from_agent, to_json=excluded.to_json, cc_json=excluded.cc_json, bcc_json=excluded.bcc_json, subject=excluded.subject, body=excluded.body, importance=excluded.importance, ack_required=excluded.ack_required`,
-		project, msg.ID, msg.ThreadID, msg.From, string(toJSON), string(ccJSON), string(bccJSON), msg.Subject, msg.Body, msg.Importance, ackRequired, msg.CreatedAt.Format(time.RFC3339Nano),
+		`INSERT INTO messages (project, message_id, thread_id, from_agent, to_json, cc_json, bcc_json, subject, body, importance, ack_required, topic, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(project, message_id) DO UPDATE SET thread_id=excluded.thread_id, from_agent=excluded.from_agent, to_json=excluded.to_json, cc_json=excluded.cc_json, bcc_json=excluded.bcc_json, subject=excluded.subject, body=excluded.body, importance=excluded.importance, ack_required=excluded.ack_required, topic=excluded.topic`,
+		project, msg.ID, msg.ThreadID, msg.From, string(toJSON), string(ccJSON), string(bccJSON), msg.Subject, msg.Body, msg.Importance, ackRequired, topic, msg.CreatedAt.Format(time.RFC3339Nano),
 	); err != nil {
 		return fmt.Errorf("upsert message: %w", err)
 	}
@@ -263,7 +283,7 @@ func (s *Store) InboxSince(_ context.Context, project, agent string, cursor uint
 	}
 	query := `SELECT i.cursor, i.project, m.message_id, m.thread_id, m.from_agent, m.to_json,
 		COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
-		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), m.created_at
+		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), COALESCE(m.topic, ''), m.created_at
 	 FROM inbox_index i
 	 JOIN messages m ON m.project = i.project AND m.message_id = i.message_id
 	 WHERE i.agent = ? AND i.cursor > ?`
@@ -283,13 +303,13 @@ func (s *Store) InboxSince(_ context.Context, project, agent string, cursor uint
 	var out []core.Message
 	for rows.Next() {
 		var (
-			cur                                                                            int64
-			proj                                                                           string
-			msgID, threadID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance string
-			ackRequired                                                                    int
-			createdAt                                                                      string
+			cur                                                                                    int64
+			proj                                                                                   string
+			msgID, threadID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance, topic string
+			ackRequired                                                                            int
+			createdAt                                                                              string
 		)
-		if err := rows.Scan(&cur, &proj, &msgID, &threadID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &createdAt); err != nil {
+		if err := rows.Scan(&cur, &proj, &msgID, &threadID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &topic, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan inbox: %w", err)
 		}
 		var to, cc, bcc []string
@@ -312,6 +332,7 @@ func (s *Store) InboxSince(_ context.Context, project, agent string, cursor uint
 			CC:          cc,
 			BCC:         bcc,
 			Subject:     subject,
+			Topic:       topic,
 			Body:        body,
 			Importance:  importance,
 			AckRequired: ackRequired == 1,
@@ -328,7 +349,7 @@ func (s *Store) InboxSince(_ context.Context, project, agent string, cursor uint
 func (s *Store) ThreadMessages(_ context.Context, project, threadID string, cursor uint64) ([]core.Message, error) {
 	query := `SELECT MAX(i.cursor) AS cursor, m.project, m.message_id, m.thread_id, m.from_agent, m.to_json,
 		COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
-		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), m.created_at
+		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), COALESCE(m.topic, ''), m.created_at
 	 FROM inbox_index i
 	 JOIN messages m ON m.project = i.project AND m.message_id = i.message_id
 	 WHERE m.project = ? AND m.thread_id = ? AND i.cursor > ?
@@ -343,13 +364,13 @@ func (s *Store) ThreadMessages(_ context.Context, project, threadID string, curs
 	var out []core.Message
 	for rows.Next() {
 		var (
-			cur                                                                        int64
-			proj                                                                       string
-			msgID, thID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance string
-			ackRequired                                                                int
-			createdAt                                                                  string
+			cur                                                                                int64
+			proj                                                                               string
+			msgID, thID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance, topic string
+			ackRequired                                                                        int
+			createdAt                                                                          string
 		)
-		if err := rows.Scan(&cur, &proj, &msgID, &thID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &createdAt); err != nil {
+		if err := rows.Scan(&cur, &proj, &msgID, &thID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &topic, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan thread: %w", err)
 		}
 		var to, cc, bcc []string
@@ -372,6 +393,7 @@ func (s *Store) ThreadMessages(_ context.Context, project, threadID string, curs
 			CC:          cc,
 			BCC:         bcc,
 			Subject:     subject,
+			Topic:       topic,
 			Body:        body,
 			Importance:  importance,
 			AckRequired: ackRequired == 1,
@@ -427,6 +449,67 @@ func (s *Store) ListThreads(_ context.Context, project, agent string, cursor uin
 			LastFrom:     lastFrom,
 			LastBody:     lastBody,
 			LastAt:       parsed,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Store) TopicMessages(_ context.Context, project, topic string, cursor uint64, limit int) ([]core.Message, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	topic = strings.ToLower(strings.TrimSpace(topic))
+	rows, err := s.db.Query(
+		`SELECT m.rowid, m.project, m.message_id, m.thread_id, m.from_agent, m.to_json,
+			COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
+			m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), COALESCE(m.topic, ''), m.created_at
+		 FROM messages m
+		 WHERE m.project = ? AND m.topic = ? AND m.rowid > ?
+		 ORDER BY m.rowid ASC LIMIT ?`,
+		project, topic, cursor, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query topic messages: %w", err)
+	}
+	defer rows.Close()
+
+	var out []core.Message
+	for rows.Next() {
+		var (
+			rowid                                                                                  int64
+			proj                                                                                   string
+			msgID, threadID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance, msgTop string
+			ackRequired                                                                            int
+			createdAt                                                                              string
+		)
+		if err := rows.Scan(&rowid, &proj, &msgID, &threadID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &msgTop, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan topic message: %w", err)
+		}
+		var to, cc, bcc []string
+		_ = json.Unmarshal([]byte(toJSON), &to)
+		_ = json.Unmarshal([]byte(ccJSON), &cc)
+		_ = json.Unmarshal([]byte(bccJSON), &bcc)
+		parsed, _ := time.Parse(time.RFC3339Nano, createdAt)
+		out = append(out, core.Message{
+			ID:          msgID,
+			ThreadID:    threadID,
+			Project:     proj,
+			From:        fromAgent,
+			To:          to,
+			CC:          cc,
+			BCC:         bcc,
+			Subject:     subject,
+			Topic:       msgTop,
+			Body:        body,
+			Importance:  importance,
+			AckRequired: ackRequired == 1,
+			CreatedAt:   parsed,
+			Cursor:      uint64(rowid),
 		})
 	}
 	if err := rows.Err(); err != nil {

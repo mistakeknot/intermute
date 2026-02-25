@@ -28,6 +28,7 @@ type Message struct {
 	CC          []string          // Carbon copy recipients
 	BCC         []string          // Blind carbon copy recipients
 	Subject     string            // Message subject line
+	Topic       string            // Topic for cross-cutting discovery (lowercased at write time)
 	Body        string
 	Metadata    map[string]string
 	Attachments []Attachment

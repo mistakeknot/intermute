@@ -45,6 +45,8 @@ type Store interface {
 	IsContact(ctx context.Context, agentID, senderID string) (bool, error)
 	HasReservationOverlap(ctx context.Context, project, agentA, agentB string) (bool, error)
 	IsThreadParticipant(ctx context.Context, project, threadID, agent string) (bool, error)
+	// Topic-based message discovery
+	TopicMessages(ctx context.Context, project, topic string, cursor uint64, limit int) ([]core.Message, error)
 	// File reservations
 	Reserve(ctx context.Context, r core.Reservation) (*core.Reservation, error)
 	GetReservation(ctx context.Context, id string) (*core.Reservation, error)
@@ -363,6 +365,20 @@ func (m *InMemory) IsThreadParticipant(_ context.Context, project, threadID, age
 	}
 	_, ok := agents[agent]
 	return ok, nil
+}
+
+// TopicMessages returns messages matching a topic, ordered by cursor.
+func (m *InMemory) TopicMessages(_ context.Context, project, topic string, cursor uint64, limit int) ([]core.Message, error) {
+	var result []core.Message
+	for _, msg := range m.messages[project] {
+		if msg.Topic == topic && msg.Cursor > cursor {
+			result = append(result, msg)
+		}
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
 }
 
 // Reserve creates a file reservation (stub for in-memory store)
