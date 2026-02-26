@@ -30,6 +30,7 @@ func NewDomainRouter(svc *DomainService, wsHandler http.Handler, mw func(http.Ha
 	mux.Handle("/api/threads", wrap(svc.handleListThreads))
 	mux.Handle("/api/threads/", wrap(svc.handleThreadMessages))
 	mux.Handle("/api/topics/", wrap(svc.handleTopicMessages))
+	mux.Handle("/api/broadcast", wrap(svc.handleBroadcast))
 
 	// Domain endpoints
 	mux.Handle("/api/specs", wrap(svc.handleSpecs))

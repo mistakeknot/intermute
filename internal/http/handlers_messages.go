@@ -438,3 +438,132 @@ func (s *Service) handleTopicMessages(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(inboxResponse{Messages: apiMsgs, Cursor: lastCursor})
 }
+
+// --- Broadcast messaging ---
+
+type broadcastRequest struct {
+	From    string `json:"from"`
+	Project string `json:"project"`
+	Topic   string `json:"topic"`
+	Body    string `json:"body"`
+	Subject string `json:"subject,omitempty"`
+}
+
+type broadcastResponse struct {
+	MessageID string   `json:"message_id"`
+	Cursor    uint64   `json:"cursor"`
+	Delivered int      `json:"delivered"`
+	Denied    []string `json:"denied,omitempty"`
+}
+
+func (s *Service) handleBroadcast(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req broadcastRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.From) == "" || strings.TrimSpace(req.Topic) == "" || strings.TrimSpace(req.Body) == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	info, _ := auth.FromContext(r.Context())
+	project := strings.TrimSpace(req.Project)
+	if info.Mode == auth.ModeAPIKey {
+		if project == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if project != info.Project {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+	}
+
+	// Rate limit: 10 broadcasts per minute per sender
+	if s.bcastRL.exceeded(project, req.From) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusTooManyRequests)
+		return
+	}
+
+	ctx := r.Context()
+
+	// Resolve all agents in the project
+	agents, err := s.store.ListAgents(ctx, project, nil)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// Build To list: all agents except sender
+	var toList []string
+	for _, a := range agents {
+		if a.ID != req.From {
+			toList = append(toList, a.ID)
+		}
+	}
+	if len(toList) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(broadcastResponse{Delivered: 0})
+		return
+	}
+
+	// Filter by contact policies (no threadID exception for broadcasts)
+	allowed, denied := s.filterByPolicy(ctx, project, req.From, "", toList)
+	if len(allowed) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(policyDeniedResponse{
+			Error:  "policy_denied",
+			Denied: denied,
+		})
+		return
+	}
+
+	msgID := uuid.NewString()
+	msg := core.Message{
+		ID:        msgID,
+		Project:   project,
+		From:      req.From,
+		To:        allowed,
+		Subject:   req.Subject,
+		Topic:     req.Topic,
+		Body:      req.Body,
+		CreatedAt: time.Now().UTC(),
+	}
+	cursor, err := s.store.AppendEvent(ctx, core.Event{
+		Type:    core.EventMessageCreated,
+		Project: project,
+		Message: msg,
+	})
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// SSE notification per recipient
+	if s.bus != nil {
+		for _, agent := range allowed {
+			s.bus.Broadcast(project, agent, map[string]any{
+				"type":       string(core.EventMessageCreated),
+				"project":    project,
+				"message_id": msgID,
+				"cursor":     cursor,
+				"agent":      agent,
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(broadcastResponse{
+		MessageID: msgID,
+		Cursor:    cursor,
+		Delivered: len(allowed),
+		Denied:    denied,
+	})
+}
