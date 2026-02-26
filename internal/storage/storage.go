@@ -34,6 +34,8 @@ type Store interface {
 	RecipientStatus(ctx context.Context, project, messageID string) (map[string]*core.RecipientStatus, error)
 	// Inbox counts
 	InboxCounts(ctx context.Context, project, agentID string) (total int, unread int, err error)
+	// Stale ack queries
+	InboxStaleAcks(ctx context.Context, project, agentID string, ttlSeconds, limit int) ([]core.StaleAck, error)
 	// Agent metadata merge (PATCH semantics: incoming keys overwrite, absent keys preserved)
 	UpdateAgentMetadata(ctx context.Context, agentID string, meta map[string]string) (core.Agent, error)
 	// Contact policy
@@ -294,6 +296,11 @@ func (m *InMemory) RecipientStatus(_ context.Context, project, messageID string)
 func (m *InMemory) InboxCounts(_ context.Context, project, agentID string) (int, int, error) {
 	msgs := m.inbox[project][agentID]
 	return len(msgs), len(msgs), nil // In-memory doesn't track read status, so all are "unread"
+}
+
+// InboxStaleAcks returns ack-required messages older than ttlSeconds without ack (stub for in-memory store)
+func (m *InMemory) InboxStaleAcks(_ context.Context, project, agentID string, ttlSeconds, limit int) ([]core.StaleAck, error) {
+	return nil, nil // In-memory store doesn't track per-recipient status
 }
 
 // UpdateAgentMetadata merges metadata keys into an existing agent (stub for in-memory store)

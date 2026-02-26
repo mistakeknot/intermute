@@ -76,6 +76,14 @@ func (r *RecipientStatus) IsRead() bool { return r.ReadAt != nil }
 // IsAcked returns true if the recipient has acknowledged the message
 func (r *RecipientStatus) IsAcked() bool { return r.AckAt != nil }
 
+// StaleAck represents a message requiring acknowledgment that hasn't been acked within a TTL.
+type StaleAck struct {
+	Message    Message    // The unacked message
+	Kind       string     // Recipient kind: to, cc, or bcc
+	ReadAt     *time.Time // When the recipient read the message (nil if unread)
+	AgeSeconds int        // Seconds since message was created
+}
+
 // Reservation represents a file lock held by an agent
 type Reservation struct {
 	ID          string        // Unique reservation ID

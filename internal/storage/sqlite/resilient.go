@@ -175,6 +175,18 @@ func (r *ResilientStore) InboxCounts(ctx context.Context, project, agentID strin
 	return total, unread, err
 }
 
+func (r *ResilientStore) InboxStaleAcks(ctx context.Context, project, agentID string, ttlSeconds, limit int) ([]core.StaleAck, error) {
+	var result []core.StaleAck
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.InboxStaleAcks(ctx, project, agentID, ttlSeconds, limit)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
 func (r *ResilientStore) Reserve(ctx context.Context, res core.Reservation) (*core.Reservation, error) {
 	var result *core.Reservation
 	err := r.cb.Execute(func() error {

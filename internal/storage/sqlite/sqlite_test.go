@@ -749,3 +749,221 @@ func TestSQLiteThreadBackfillIncludesSender(t *testing.T) {
 		t.Fatalf("expected sender alice to see 1 thread after backfill, got %d", len(threadsAlice))
 	}
 }
+
+func TestInboxStaleAcks(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	// Create an old message (2 hours ago) with ack_required
+	oldTime := time.Now().UTC().Add(-2 * time.Hour)
+	_, _ = st.AppendEvent(ctx, core.Event{
+		Type: core.EventMessageCreated,
+		Agent: "bob",
+		Message: core.Message{
+			ID:          "m-stale",
+			Project:     "proj",
+			From:        "alice",
+			To:          []string{"bob"},
+			Subject:     "urgent",
+			Body:        "please ack this",
+			AckRequired: true,
+			CreatedAt:   oldTime,
+		},
+	})
+
+	// Create a recent message (1 minute ago) with ack_required — should NOT be stale at 30min TTL
+	recentTime := time.Now().UTC().Add(-1 * time.Minute)
+	_, _ = st.AppendEvent(ctx, core.Event{
+		Type: core.EventMessageCreated,
+		Agent: "bob",
+		Message: core.Message{
+			ID:          "m-recent",
+			Project:     "proj",
+			From:        "alice",
+			To:          []string{"bob"},
+			Body:        "also ack",
+			AckRequired: true,
+			CreatedAt:   recentTime,
+		},
+	})
+
+	// Create an old message WITHOUT ack_required — should not appear
+	_, _ = st.AppendEvent(ctx, core.Event{
+		Type: core.EventMessageCreated,
+		Agent: "bob",
+		Message: core.Message{
+			ID:        "m-noack",
+			Project:   "proj",
+			From:      "alice",
+			To:        []string{"bob"},
+			Body:      "no ack needed",
+			CreatedAt: oldTime,
+		},
+	})
+
+	// Query with 30-minute TTL — only m-stale should match
+	stale, err := st.InboxStaleAcks(ctx, "proj", "bob", 1800, 10)
+	if err != nil {
+		t.Fatalf("InboxStaleAcks: %v", err)
+	}
+	if len(stale) != 1 {
+		t.Fatalf("expected 1 stale ack, got %d", len(stale))
+	}
+	if stale[0].Message.ID != "m-stale" {
+		t.Fatalf("expected m-stale, got %s", stale[0].Message.ID)
+	}
+	if stale[0].Kind != "to" {
+		t.Fatalf("expected kind=to, got %s", stale[0].Kind)
+	}
+	if stale[0].AgeSeconds < 7000 {
+		t.Fatalf("expected age >= 7000s, got %d", stale[0].AgeSeconds)
+	}
+	if stale[0].Message.Subject != "urgent" {
+		t.Fatalf("expected subject=urgent, got %s", stale[0].Message.Subject)
+	}
+}
+
+func TestInboxStaleAcks_AckedMessageExcluded(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	oldTime := time.Now().UTC().Add(-2 * time.Hour)
+	_, _ = st.AppendEvent(ctx, core.Event{
+		Type: core.EventMessageCreated,
+		Agent: "bob",
+		Message: core.Message{
+			ID:          "m-acked",
+			Project:     "proj",
+			From:        "alice",
+			To:          []string{"bob"},
+			Body:        "ack me",
+			AckRequired: true,
+			CreatedAt:   oldTime,
+		},
+	})
+
+	// Ack the message
+	if err := st.MarkAck(ctx, "proj", "m-acked", "bob"); err != nil {
+		t.Fatalf("MarkAck: %v", err)
+	}
+
+	// Should return nothing — message has been acked
+	stale, err := st.InboxStaleAcks(ctx, "proj", "bob", 1800, 10)
+	if err != nil {
+		t.Fatalf("InboxStaleAcks: %v", err)
+	}
+	if len(stale) != 0 {
+		t.Fatalf("expected 0 stale acks after ack, got %d", len(stale))
+	}
+}
+
+func TestInboxStaleAcks_ProjectIsolation(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	oldTime := time.Now().UTC().Add(-2 * time.Hour)
+	_, _ = st.AppendEvent(ctx, core.Event{
+		Type: core.EventMessageCreated,
+		Agent: "bob",
+		Message: core.Message{
+			ID:          "m-proj-a",
+			Project:     "proj-a",
+			From:        "alice",
+			To:          []string{"bob"},
+			Body:        "ack",
+			AckRequired: true,
+			CreatedAt:   oldTime,
+		},
+	})
+	_, _ = st.AppendEvent(ctx, core.Event{
+		Type: core.EventMessageCreated,
+		Agent: "bob",
+		Message: core.Message{
+			ID:          "m-proj-b",
+			Project:     "proj-b",
+			From:        "alice",
+			To:          []string{"bob"},
+			Body:        "ack",
+			AckRequired: true,
+			CreatedAt:   oldTime,
+		},
+	})
+
+	// Query proj-a only
+	stale, err := st.InboxStaleAcks(ctx, "proj-a", "bob", 1800, 10)
+	if err != nil {
+		t.Fatalf("InboxStaleAcks: %v", err)
+	}
+	if len(stale) != 1 {
+		t.Fatalf("expected 1 stale ack for proj-a, got %d", len(stale))
+	}
+	if stale[0].Message.Project != "proj-a" {
+		t.Fatalf("expected project=proj-a, got %s", stale[0].Message.Project)
+	}
+}
+
+func TestInboxStaleAcks_Limit(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	oldTime := time.Now().UTC().Add(-2 * time.Hour)
+	for i := 0; i < 5; i++ {
+		_, _ = st.AppendEvent(ctx, core.Event{
+			Type: core.EventMessageCreated,
+			Agent: "bob",
+			Message: core.Message{
+				ID:          fmt.Sprintf("m-lim-%d", i),
+				Project:     "proj",
+				From:        "alice",
+				To:          []string{"bob"},
+				Body:        "ack",
+				AckRequired: true,
+				CreatedAt:   oldTime,
+			},
+		})
+	}
+
+	stale, err := st.InboxStaleAcks(ctx, "proj", "bob", 1800, 3)
+	if err != nil {
+		t.Fatalf("InboxStaleAcks: %v", err)
+	}
+	if len(stale) != 3 {
+		t.Fatalf("expected 3 stale acks (limit), got %d", len(stale))
+	}
+}
+
+func TestInboxStaleAcks_ReadAtTracked(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	oldTime := time.Now().UTC().Add(-2 * time.Hour)
+	_, _ = st.AppendEvent(ctx, core.Event{
+		Type: core.EventMessageCreated,
+		Agent: "bob",
+		Message: core.Message{
+			ID:          "m-read",
+			Project:     "proj",
+			From:        "alice",
+			To:          []string{"bob"},
+			Body:        "read but not acked",
+			AckRequired: true,
+			CreatedAt:   oldTime,
+		},
+	})
+
+	// Mark as read (but NOT acked)
+	if err := st.MarkRead(ctx, "proj", "m-read", "bob"); err != nil {
+		t.Fatalf("MarkRead: %v", err)
+	}
+
+	stale, err := st.InboxStaleAcks(ctx, "proj", "bob", 1800, 10)
+	if err != nil {
+		t.Fatalf("InboxStaleAcks: %v", err)
+	}
+	if len(stale) != 1 {
+		t.Fatalf("expected 1 stale ack (read but not acked), got %d", len(stale))
+	}
+	if stale[0].ReadAt == nil {
+		t.Fatal("expected ReadAt to be set for read message")
+	}
+}

@@ -1336,6 +1336,86 @@ func (s *Store) InboxCounts(_ context.Context, project, agentID string) (total i
 	return total, unread, nil
 }
 
+// InboxStaleAcks returns messages requiring ack that haven't been acked within ttlSeconds.
+func (s *Store) InboxStaleAcks(_ context.Context, project, agentID string, ttlSeconds, limit int) ([]core.StaleAck, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	// Join messages with message_recipients to find ack-required messages
+	// where ack_at IS NULL and the message is older than ttlSeconds.
+	query := `SELECT m.message_id, m.thread_id, m.project, m.from_agent, m.to_json,
+		COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
+		m.body, COALESCE(m.importance, ''), COALESCE(m.topic, ''), m.created_at,
+		r.kind, r.read_at
+	 FROM message_recipients r
+	 JOIN messages m ON m.project = r.project AND m.message_id = r.message_id
+	 WHERE r.project = ? AND r.agent_id = ?
+	   AND m.ack_required = 1
+	   AND r.ack_at IS NULL
+	   AND (strftime('%s', 'now') - strftime('%s', m.created_at)) >= ?
+	 ORDER BY m.created_at ASC
+	 LIMIT ?`
+	rows, err := s.db.Query(query, project, agentID, ttlSeconds, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query stale acks: %w", err)
+	}
+	defer rows.Close()
+
+	now := time.Now().UTC()
+	var out []core.StaleAck
+	for rows.Next() {
+		var (
+			msgID, threadID, proj, fromAgent                       string
+			toJSON, ccJSON, bccJSON, subject, body, importance     string
+			topic, createdAtStr, kind                              string
+			readAt                                                 sql.NullString
+		)
+		if err := rows.Scan(&msgID, &threadID, &proj, &fromAgent,
+			&toJSON, &ccJSON, &bccJSON, &subject,
+			&body, &importance, &topic, &createdAtStr,
+			&kind, &readAt); err != nil {
+			return nil, fmt.Errorf("scan stale ack: %w", err)
+		}
+		var to, cc, bcc []string
+		_ = json.Unmarshal([]byte(toJSON), &to)
+		_ = json.Unmarshal([]byte(ccJSON), &cc)
+		_ = json.Unmarshal([]byte(bccJSON), &bcc)
+		createdAt, _ := time.Parse(time.RFC3339Nano, createdAtStr)
+
+		sa := core.StaleAck{
+			Message: core.Message{
+				ID:          msgID,
+				ThreadID:    threadID,
+				Project:     proj,
+				From:        fromAgent,
+				To:          to,
+				CC:          cc,
+				BCC:         bcc,
+				Subject:     subject,
+				Topic:       topic,
+				Body:        body,
+				Importance:  importance,
+				AckRequired: true,
+				CreatedAt:   createdAt,
+			},
+			Kind:       kind,
+			AgeSeconds: int(now.Sub(createdAt).Seconds()),
+		}
+		if readAt.Valid {
+			t, _ := time.Parse(time.RFC3339Nano, readAt.String)
+			sa.ReadAt = &t
+		}
+		out = append(out, sa)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return out, nil
+}
+
 // Reserve creates a new file reservation
 func (s *Store) Reserve(_ context.Context, r core.Reservation) (*core.Reservation, error) {
 	if r.ID == "" {

@@ -108,6 +108,30 @@ type InboxCounts struct {
 	Unread int `json:"unread"`
 }
 
+// StaleAckItem represents a single stale acknowledgment message
+type StaleAckItem struct {
+	ID         string   `json:"id"`
+	ThreadID   string   `json:"thread_id"`
+	Project    string   `json:"project"`
+	From       string   `json:"from"`
+	To         []string `json:"to"`
+	Subject    string   `json:"subject,omitempty"`
+	Body       string   `json:"body"`
+	CreatedAt  string   `json:"created_at"`
+	Kind       string   `json:"kind"`
+	ReadAt     *string  `json:"read_at"`
+	AgeSeconds int      `json:"age_seconds"`
+}
+
+// StaleAcksResponse contains messages requiring ack that are overdue
+type StaleAcksResponse struct {
+	Project    string         `json:"project"`
+	Agent      string         `json:"agent"`
+	TTLSeconds int            `json:"ttl_seconds"`
+	Count      int            `json:"count"`
+	Messages   []StaleAckItem `json:"messages"`
+}
+
 // Reservation represents a file lock held by an agent
 type Reservation struct {
 	ID          string  `json:"id"`
@@ -355,6 +379,34 @@ func (c *Client) InboxCounts(ctx context.Context, agent string) (InboxCounts, er
 	var out InboxCounts
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return InboxCounts{}, err
+	}
+	return out, nil
+}
+
+// StaleAcks returns messages requiring acknowledgment that are older than ttlSeconds
+func (c *Client) StaleAcks(ctx context.Context, agent string, ttlSeconds, limit int) (StaleAcksResponse, error) {
+	values := url.Values{}
+	if c.Project != "" {
+		values.Set("project", c.Project)
+	}
+	if ttlSeconds > 0 {
+		values.Set("ttl_seconds", fmt.Sprintf("%d", ttlSeconds))
+	}
+	if limit > 0 {
+		values.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	endpoint := fmt.Sprintf("/api/inbox/%s/stale-acks?%s", url.PathEscape(agent), values.Encode())
+	resp, err := c.get(ctx, endpoint)
+	if err != nil {
+		return StaleAcksResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return StaleAcksResponse{}, fmt.Errorf("stale acks failed: %d", resp.StatusCode)
+	}
+	var out StaleAcksResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return StaleAcksResponse{}, err
 	}
 	return out, nil
 }

@@ -223,3 +223,63 @@ func TestSendMessageValidation(t *testing.T) {
 		resp.Body.Close()
 	})
 }
+
+func TestStaleAcksEndpoint(t *testing.T) {
+	env := newTestEnv(t)
+	const project = "proj"
+
+	// Send a message with ack_required
+	resp := env.post(t, "/api/messages", map[string]any{
+		"project":      project,
+		"from":         "alice",
+		"to":           []string{"bob"},
+		"body":         "please ack",
+		"subject":      "urgent",
+		"ack_required": true,
+	})
+	requireStatus(t, resp, http.StatusOK)
+	result := decodeJSON[map[string]any](t, resp)
+	msgID := result["message_id"].(string)
+
+	// Use ttl_seconds=0 so the just-sent message is immediately stale
+	staleResp := env.get(t, fmt.Sprintf("/api/inbox/bob/stale-acks?project=%s&ttl_seconds=0", project))
+	requireStatus(t, staleResp, http.StatusOK)
+	var staleResult staleAcksResponse
+	if err := json.NewDecoder(staleResp.Body).Decode(&staleResult); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	staleResp.Body.Close()
+
+	if staleResult.Count != 1 {
+		t.Fatalf("expected 1 stale ack, got %d", staleResult.Count)
+	}
+	if staleResult.TTLSeconds != 0 {
+		t.Fatalf("expected ttl_seconds=0, got %d", staleResult.TTLSeconds)
+	}
+	if staleResult.Messages[0].ID != msgID {
+		t.Fatalf("expected message %s, got %s", msgID, staleResult.Messages[0].ID)
+	}
+	if staleResult.Messages[0].Subject != "urgent" {
+		t.Fatalf("expected subject=urgent, got %s", staleResult.Messages[0].Subject)
+	}
+}
+
+func TestStaleAcksEndpoint_EmptyResult(t *testing.T) {
+	env := newTestEnv(t)
+
+	// No messages at all — should return empty list
+	resp := env.get(t, "/api/inbox/nobody/stale-acks?project=proj&ttl_seconds=1800")
+	requireStatus(t, resp, http.StatusOK)
+	var result staleAcksResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	resp.Body.Close()
+
+	if result.Count != 0 {
+		t.Fatalf("expected 0, got %d", result.Count)
+	}
+	if len(result.Messages) != 0 {
+		t.Fatalf("expected empty messages, got %d", len(result.Messages))
+	}
+}

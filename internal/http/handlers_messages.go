@@ -216,6 +216,11 @@ func (s *Service) handleInbox(w http.ResponseWriter, r *http.Request) {
 		s.handleInboxCounts(w, r)
 		return
 	}
+	// Check if this is a stale-acks request: /api/inbox/{agent}/stale-acks
+	if strings.HasSuffix(path, "/stale-acks") {
+		s.handleStaleAcks(w, r)
+		return
+	}
 	agent := strings.Trim(path, "/")
 	if agent == "" {
 		w.WriteHeader(http.StatusBadRequest)
@@ -303,6 +308,98 @@ func (s *Service) handleInboxCounts(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(inboxCountsResponse{Total: total, Unread: unread})
+}
+
+type staleAckItem struct {
+	ID         string   `json:"id"`
+	ThreadID   string   `json:"thread_id"`
+	Project    string   `json:"project"`
+	From       string   `json:"from"`
+	To         []string `json:"to"`
+	Subject    string   `json:"subject,omitempty"`
+	Body       string   `json:"body"`
+	CreatedAt  string   `json:"created_at"`
+	Kind       string   `json:"kind"`
+	ReadAt     *string  `json:"read_at"`
+	AgeSeconds int      `json:"age_seconds"`
+}
+
+type staleAcksResponse struct {
+	Project    string         `json:"project"`
+	Agent      string         `json:"agent"`
+	TTLSeconds int            `json:"ttl_seconds"`
+	Count      int            `json:"count"`
+	Messages   []staleAckItem `json:"messages"`
+}
+
+func (s *Service) handleStaleAcks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	// Path: /api/inbox/{agent}/stale-acks
+	path := strings.TrimPrefix(r.URL.Path, "/api/inbox/")
+	path = strings.TrimSuffix(path, "/stale-acks")
+	agent := strings.Trim(path, "/")
+	if agent == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	info, _ := auth.FromContext(r.Context())
+	project := info.Project
+	if project == "" {
+		project = strings.TrimSpace(r.URL.Query().Get("project"))
+	}
+
+	ttlSeconds := 1800 // Default: 30 minutes
+	if v := r.URL.Query().Get("ttl_seconds"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
+			ttlSeconds = parsed
+		}
+	}
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	staleAcks, err := s.store.InboxStaleAcks(r.Context(), project, agent, ttlSeconds, limit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	items := make([]staleAckItem, 0, len(staleAcks))
+	for _, sa := range staleAcks {
+		item := staleAckItem{
+			ID:         sa.Message.ID,
+			ThreadID:   sa.Message.ThreadID,
+			Project:    sa.Message.Project,
+			From:       sa.Message.From,
+			To:         sa.Message.To,
+			Subject:    sa.Message.Subject,
+			Body:       sa.Message.Body,
+			CreatedAt:  sa.Message.CreatedAt.Format(time.RFC3339Nano),
+			Kind:       sa.Kind,
+			AgeSeconds: sa.AgeSeconds,
+		}
+		if sa.ReadAt != nil {
+			s := sa.ReadAt.Format(time.RFC3339Nano)
+			item.ReadAt = &s
+		}
+		items = append(items, item)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(staleAcksResponse{
+		Project:    project,
+		Agent:      agent,
+		TTLSeconds: ttlSeconds,
+		Count:      len(items),
+		Messages:   items,
+	})
 }
 
 type messageActionRequest struct {
