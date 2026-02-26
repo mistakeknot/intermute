@@ -7,3 +7,6 @@
 .auracoil/oracle/
 
 .beads/
+.tldrs/
+.tldrsignore
+cmd/intermute/intermute
