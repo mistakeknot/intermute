@@ -36,10 +36,12 @@ func main() {
 
 func serveCmd() *cobra.Command {
 	var (
-		port       int
-		host       string
-		dbPath     string
-		socketPath string
+		port              int
+		host              string
+		dbPath            string
+		socketPath        string
+		coordDualWrite    bool
+		intercoreDBPath   string
 	)
 
 	cmd := &cobra.Command{
@@ -53,6 +55,25 @@ func serveCmd() *cobra.Command {
 			store, err := sqlite.New(dbPath)
 			if err != nil {
 				return fmt.Errorf("store init: %w", err)
+			}
+
+			// Optional dual-write bridge to Intercore coordination_locks.
+			if coordDualWrite {
+				icDB := intercoreDBPath
+				if icDB == "" {
+					icDB = sqlite.DiscoverIntercoreDB("")
+				}
+				if icDB != "" {
+					bridge, err := sqlite.NewCoordinationBridge(icDB)
+					if err != nil {
+						log.Printf("coordination bridge disabled: %v", err)
+					} else {
+						store.SetCoordinationBridge(bridge)
+						log.Printf("coordination dual-write enabled: %s", icDB)
+					}
+				} else {
+					log.Printf("coordination dual-write: intercore.db not found")
+				}
 			}
 
 			// Wrap store with circuit breaker + retry resilience
@@ -106,7 +127,14 @@ func serveCmd() *cobra.Command {
 				defer cancel()
 				_ = srv.Shutdown(ctx)
 
-				// 3. Checkpoint WAL and close database
+				// 3. Close coordination bridge (if enabled)
+				if b := store.Bridge(); b != nil {
+					if err := b.Close(); err != nil {
+						log.Printf("coordination bridge close: %v", err)
+					}
+				}
+
+				// 4. Checkpoint WAL and close database
 				if err := store.Close(); err != nil {
 					log.Printf("store close: %v", err)
 				}
@@ -128,6 +156,8 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&host, "host", "127.0.0.1", "HTTP server bind address")
 	cmd.Flags().StringVar(&dbPath, "db", "intermute.db", "SQLite database path")
 	cmd.Flags().StringVar(&socketPath, "socket", "", "Unix domain socket path (e.g. /var/run/intermute.sock)")
+	cmd.Flags().BoolVar(&coordDualWrite, "coordination-dual-write", false, "Mirror reservations to Intercore coordination_locks table")
+	cmd.Flags().StringVar(&intercoreDBPath, "intercore-db", "", "Path to intercore.db (auto-discovered if empty)")
 
 	return cmd
 }

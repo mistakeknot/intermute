@@ -24,7 +24,8 @@ import (
 var schema string
 
 type Store struct {
-	db dbHandle
+	db     dbHandle
+	bridge *CoordinationBridge
 }
 
 func New(path string) (*Store, error) {
@@ -42,6 +43,17 @@ func New(path string) (*Store, error) {
 		return nil, err
 	}
 	return &Store{db: &queryLogger{inner: db}}, nil
+}
+
+// SetCoordinationBridge enables dual-write to Intercore's coordination_locks table.
+// If not called, the bridge is nil and dual-write is silently skipped.
+func (s *Store) SetCoordinationBridge(b *CoordinationBridge) {
+	s.bridge = b
+}
+
+// Bridge returns the coordination bridge, or nil if not configured.
+func (s *Store) Bridge() *CoordinationBridge {
+	return s.bridge
 }
 
 func NewInMemory() (*Store, error) {
@@ -1428,6 +1440,13 @@ func (s *Store) Reserve(_ context.Context, r core.Reservation) (*core.Reservatio
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit reservation tx: %w", err)
 	}
+
+	// Dual-write to Intercore coordination_locks (best-effort).
+	if s.bridge != nil {
+		ttlSec := int(r.TTL.Seconds())
+		s.bridge.MirrorReserve(r.ID, r.AgentID, r.Project, r.PathPattern, r.Exclusive, r.Reason, ttlSec, r.CreatedAt, r.ExpiresAt)
+	}
+
 	return &r, nil
 }
 
@@ -1478,6 +1497,12 @@ func (s *Store) ReleaseReservation(_ context.Context, id, agentID string) error 
 	if rows == 0 {
 		return core.ErrNotFound
 	}
+
+	// Dual-write: mirror release to Intercore coordination_locks.
+	if s.bridge != nil {
+		s.bridge.MirrorRelease(id)
+	}
+
 	return nil
 }
 
