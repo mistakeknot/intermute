@@ -95,6 +95,9 @@ func applySchema(db *sql.DB) error {
 	if err := migrateTopicColumn(db); err != nil {
 		return err
 	}
+	if err := migrateWindowIdentities(db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -315,11 +318,11 @@ func (s *Store) InboxSince(_ context.Context, project, agent string, cursor uint
 	var out []core.Message
 	for rows.Next() {
 		var (
-			cur                                                                                    int64
-			proj                                                                                   string
+			cur                                                                                   int64
+			proj                                                                                  string
 			msgID, threadID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance, topic string
-			ackRequired                                                                            int
-			createdAt                                                                              string
+			ackRequired                                                                           int
+			createdAt                                                                             string
 		)
 		if err := rows.Scan(&cur, &proj, &msgID, &threadID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &topic, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan inbox: %w", err)
@@ -376,11 +379,11 @@ func (s *Store) ThreadMessages(_ context.Context, project, threadID string, curs
 	var out []core.Message
 	for rows.Next() {
 		var (
-			cur                                                                                int64
-			proj                                                                               string
+			cur                                                                               int64
+			proj                                                                              string
 			msgID, thID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance, topic string
-			ackRequired                                                                        int
-			createdAt                                                                          string
+			ackRequired                                                                       int
+			createdAt                                                                         string
 		)
 		if err := rows.Scan(&cur, &proj, &msgID, &thID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &topic, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan thread: %w", err)
@@ -1368,10 +1371,10 @@ func (s *Store) InboxStaleAcks(_ context.Context, project, agentID string, ttlSe
 	var out []core.StaleAck
 	for rows.Next() {
 		var (
-			msgID, threadID, proj, fromAgent                       string
-			toJSON, ccJSON, bccJSON, subject, body, importance     string
-			topic, createdAtStr, kind                              string
-			readAt                                                 sql.NullString
+			msgID, threadID, proj, fromAgent                   string
+			toJSON, ccJSON, bccJSON, subject, body, importance string
+			topic, createdAtStr, kind                          string
+			readAt                                             sql.NullString
 		)
 		if err := rows.Scan(&msgID, &threadID, &proj, &fromAgent,
 			&toJSON, &ccJSON, &bccJSON, &subject,
@@ -1785,4 +1788,191 @@ func migrateDomainVersions(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// migrateWindowIdentities creates the window_identities table if it doesn't exist.
+func migrateWindowIdentities(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS window_identities (
+		id TEXT PRIMARY KEY,
+		project TEXT NOT NULL,
+		window_uuid TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		display_name TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		last_active_at TEXT NOT NULL,
+		expires_at TEXT,
+		UNIQUE(project, window_uuid)
+	)`)
+	if err != nil {
+		return fmt.Errorf("create window_identities: %w", err)
+	}
+	// Index kept for query performance on the unique constraint columns.
+	_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_window_project
+		ON window_identities(project, window_uuid)`)
+	if err != nil {
+		return fmt.Errorf("create window identity index: %w", err)
+	}
+	return nil
+}
+
+// UpsertWindowIdentity inserts or updates a window identity by (project, window_uuid).
+// On conflict, it updates agent_id, display_name, and touches last_active_at.
+// The insert and read-back are wrapped in a transaction for atomicity.
+func (s *Store) UpsertWindowIdentity(ctx context.Context, wi core.WindowIdentity) (*core.WindowIdentity, error) {
+	now := time.Now().UTC()
+	if wi.ID == "" {
+		wi.ID = uuid.NewString()
+	}
+	if wi.CreatedAt.IsZero() {
+		wi.CreatedAt = now
+	}
+	wi.LastActiveAt = now
+
+	var expiresAt sql.NullString
+	if wi.ExpiresAt != nil {
+		expiresAt = sql.NullString{String: wi.ExpiresAt.Format(time.RFC3339Nano), Valid: true}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin upsert window tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `INSERT INTO window_identities (id, project, window_uuid, agent_id, display_name, created_at, last_active_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(project, window_uuid) DO UPDATE SET
+			agent_id = excluded.agent_id,
+			display_name = excluded.display_name,
+			last_active_at = excluded.last_active_at,
+			expires_at = NULL`,
+		wi.ID, wi.Project, wi.WindowUUID, wi.AgentID, wi.DisplayName,
+		wi.CreatedAt.Format(time.RFC3339Nano), wi.LastActiveAt.Format(time.RFC3339Nano),
+		expiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("upsert window identity: %w", err)
+	}
+
+	// Read back the actual row within the same transaction for atomicity.
+	row := tx.QueryRowContext(ctx, `SELECT id, project, window_uuid, agent_id, display_name, created_at, last_active_at, expires_at
+		FROM window_identities
+		WHERE project = ? AND window_uuid = ? AND (expires_at IS NULL OR expires_at > ?)`,
+		wi.Project, wi.WindowUUID, now.Format(time.RFC3339Nano))
+
+	result, err := scanWindowIdentityRow(row)
+	if err != nil {
+		return nil, fmt.Errorf("read-back window identity: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit upsert window tx: %w", err)
+	}
+	return result, nil
+}
+
+// ListWindowIdentities returns non-expired window identities for a project.
+func (s *Store) ListWindowIdentities(ctx context.Context, project string) ([]core.WindowIdentity, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	rows, err := s.db.Query(`SELECT id, project, window_uuid, agent_id, display_name, created_at, last_active_at, expires_at
+		FROM window_identities
+		WHERE project = ? AND (expires_at IS NULL OR expires_at > ?)
+		ORDER BY last_active_at DESC`, project, now)
+	if err != nil {
+		return nil, fmt.Errorf("list window identities: %w", err)
+	}
+	defer rows.Close()
+
+	var out []core.WindowIdentity
+	for rows.Next() {
+		wi, err := scanWindowIdentity(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *wi)
+	}
+	return out, rows.Err()
+}
+
+// ExpireWindowIdentity sets expires_at = now for a window identity.
+// Uses Go-formatted RFC3339Nano timestamp for consistency with other timestamp storage.
+func (s *Store) ExpireWindowIdentity(ctx context.Context, project, windowUUID string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.Exec(`UPDATE window_identities SET expires_at = ?
+		WHERE project = ? AND window_uuid = ?`, now, project, windowUUID)
+	if err != nil {
+		return fmt.Errorf("expire window identity: %w", err)
+	}
+	return nil
+}
+
+// LookupWindowIdentity finds a non-expired window identity by (project, window_uuid).
+func (s *Store) LookupWindowIdentity(ctx context.Context, project, windowUUID string) (*core.WindowIdentity, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	row := s.db.QueryRow(`SELECT id, project, window_uuid, agent_id, display_name, created_at, last_active_at, expires_at
+		FROM window_identities
+		WHERE project = ? AND window_uuid = ? AND (expires_at IS NULL OR expires_at > ?)`,
+		project, windowUUID, now)
+
+	wi, err := scanWindowIdentityRow(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("lookup window identity: %w", err)
+	}
+	return wi, nil
+}
+
+// scanWindowIdentity scans a WindowIdentity from a row set.
+func scanWindowIdentity(rows *sql.Rows) (*core.WindowIdentity, error) {
+	var (
+		id, project, windowUUID, agentID, displayName string
+		createdAt, lastActiveAt                       string
+		expiresAt                                     sql.NullString
+	)
+	if err := rows.Scan(&id, &project, &windowUUID, &agentID, &displayName, &createdAt, &lastActiveAt, &expiresAt); err != nil {
+		return nil, fmt.Errorf("scan window identity: %w", err)
+	}
+	return parseWindowIdentity(id, project, windowUUID, agentID, displayName, createdAt, lastActiveAt, expiresAt)
+}
+
+// scanWindowIdentityRow scans a WindowIdentity from a single row.
+func scanWindowIdentityRow(row *sql.Row) (*core.WindowIdentity, error) {
+	var (
+		id, project, windowUUID, agentID, displayName string
+		createdAt, lastActiveAt                       string
+		expiresAt                                     sql.NullString
+	)
+	if err := row.Scan(&id, &project, &windowUUID, &agentID, &displayName, &createdAt, &lastActiveAt, &expiresAt); err != nil {
+		return nil, err
+	}
+	return parseWindowIdentity(id, project, windowUUID, agentID, displayName, createdAt, lastActiveAt, expiresAt)
+}
+
+func parseWindowIdentity(id, project, windowUUID, agentID, displayName, createdAt, lastActiveAt string, expiresAt sql.NullString) (*core.WindowIdentity, error) {
+	ca, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse window created_at %q: %w", createdAt, err)
+	}
+	la, err := time.Parse(time.RFC3339Nano, lastActiveAt)
+	if err != nil {
+		return nil, fmt.Errorf("parse window last_active_at %q: %w", lastActiveAt, err)
+	}
+	wi := &core.WindowIdentity{
+		ID:           id,
+		Project:      project,
+		WindowUUID:   windowUUID,
+		AgentID:      agentID,
+		DisplayName:  displayName,
+		CreatedAt:    ca,
+		LastActiveAt: la,
+	}
+	if expiresAt.Valid {
+		t, err := time.Parse(time.RFC3339Nano, expiresAt.String)
+		if err != nil {
+			return nil, fmt.Errorf("parse window expires_at %q: %w", expiresAt.String, err)
+		}
+		wi.ExpiresAt = &t
+	}
+	return wi, nil
 }

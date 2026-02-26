@@ -25,10 +25,10 @@ type Message struct {
 	Project     string
 	From        string
 	To          []string
-	CC          []string          // Carbon copy recipients
-	BCC         []string          // Blind carbon copy recipients
-	Subject     string            // Message subject line
-	Topic       string            // Topic for cross-cutting discovery (lowercased at write time)
+	CC          []string // Carbon copy recipients
+	BCC         []string // Blind carbon copy recipients
+	Subject     string   // Message subject line
+	Topic       string   // Topic for cross-cutting discovery (lowercased at write time)
 	Body        string
 	Metadata    map[string]string
 	Attachments []Attachment
@@ -82,6 +82,20 @@ type StaleAck struct {
 	Kind       string     // Recipient kind: to, cc, or bcc
 	ReadAt     *time.Time // When the recipient read the message (nil if unread)
 	AgeSeconds int        // Seconds since message was created
+}
+
+// WindowIdentity maps a tmux window UUID to a stable agent identity.
+// Survives session restarts — the agent_id stays the same so reservations,
+// inbox, and contacts are preserved.
+type WindowIdentity struct {
+	ID           string
+	Project      string
+	WindowUUID   string
+	AgentID      string
+	DisplayName  string
+	CreatedAt    time.Time
+	LastActiveAt time.Time
+	ExpiresAt    *time.Time
 }
 
 // Reservation represents a file lock held by an agent

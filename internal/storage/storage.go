@@ -56,6 +56,11 @@ type Store interface {
 	ActiveReservations(ctx context.Context, project string) ([]core.Reservation, error)
 	AgentReservations(ctx context.Context, agentID string) ([]core.Reservation, error)
 	CheckConflicts(ctx context.Context, project, pathPattern string, exclusive bool) ([]core.ConflictDetail, error)
+	// Window identity persistence
+	UpsertWindowIdentity(ctx context.Context, wi core.WindowIdentity) (*core.WindowIdentity, error)
+	ListWindowIdentities(ctx context.Context, project string) ([]core.WindowIdentity, error)
+	ExpireWindowIdentity(ctx context.Context, project, windowUUID string) error
+	LookupWindowIdentity(ctx context.Context, project, windowUUID string) (*core.WindowIdentity, error)
 }
 
 // InMemory is a minimal in-memory store for tests.
@@ -416,4 +421,24 @@ func (m *InMemory) AgentReservations(_ context.Context, agentID string) ([]core.
 // CheckConflicts returns conflicting reservations (stub for in-memory store)
 func (m *InMemory) CheckConflicts(_ context.Context, project, pathPattern string, exclusive bool) ([]core.ConflictDetail, error) {
 	return nil, nil // In-memory store doesn't track reservations
+}
+
+// UpsertWindowIdentity upserts a window identity (stub for in-memory store)
+func (m *InMemory) UpsertWindowIdentity(_ context.Context, wi core.WindowIdentity) (*core.WindowIdentity, error) {
+	return &wi, nil
+}
+
+// ListWindowIdentities lists window identities (stub for in-memory store)
+func (m *InMemory) ListWindowIdentities(_ context.Context, project string) ([]core.WindowIdentity, error) {
+	return nil, nil
+}
+
+// ExpireWindowIdentity expires a window identity (stub for in-memory store)
+func (m *InMemory) ExpireWindowIdentity(_ context.Context, project, windowUUID string) error {
+	return nil
+}
+
+// LookupWindowIdentity looks up a window identity (stub for in-memory store)
+func (m *InMemory) LookupWindowIdentity(_ context.Context, project, windowUUID string) (*core.WindowIdentity, error) {
+	return nil, nil
 }

@@ -21,6 +21,10 @@ func NewDomainRouter(svc *DomainService, wsHandler http.Handler, mw func(http.Ha
 	mux.Handle("/api/reservations/check", wrap(svc.checkConflicts))
 	mux.Handle("/api/reservations/", wrap(svc.handleReservationByID))
 
+	// Window identity persistence
+	mux.Handle("/api/windows", wrap(svc.handleWindows))
+	mux.Handle("/api/windows/", wrap(svc.handleWindowByID))
+
 	// Existing messaging endpoints
 	mux.Handle("/api/agents", wrap(svc.handleAgents))
 	mux.Handle("/api/agents/", wrap(svc.handleAgentSubpath))

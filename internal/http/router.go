@@ -23,6 +23,8 @@ func NewRouter(svc *Service, wsHandler http.Handler, mw func(http.Handler) http.
 	mux.Handle("/api/reservations", wrap(svc.handleReservations))
 	mux.Handle("/api/reservations/check", wrap(svc.checkConflicts))
 	mux.Handle("/api/reservations/", wrap(svc.handleReservationByID))
+	mux.Handle("/api/windows", wrap(svc.handleWindows))
+	mux.Handle("/api/windows/", wrap(svc.handleWindowByID))
 	if wsHandler != nil {
 		if mw != nil {
 			mux.Handle("/ws/agents/", mw(wsHandler))

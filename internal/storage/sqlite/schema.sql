@@ -244,3 +244,20 @@ CREATE TABLE IF NOT EXISTS cuj_feature_links (
 
 CREATE INDEX IF NOT EXISTS idx_cuj_links_cuj ON cuj_feature_links(project, cuj_id);
 CREATE INDEX IF NOT EXISTS idx_cuj_links_feature ON cuj_feature_links(project, feature_id);
+
+-- Window identity persistence (maps tmux window UUID to stable agent ID)
+
+CREATE TABLE IF NOT EXISTS window_identities (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL,
+  window_uuid TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_active_at TEXT NOT NULL,
+  expires_at TEXT,
+  UNIQUE(project, window_uuid)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_window_project
+  ON window_identities(project, window_uuid);

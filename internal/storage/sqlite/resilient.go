@@ -807,6 +807,54 @@ func (r *ResilientStore) SweepExpired(ctx context.Context, expiredBefore time.Ti
 	return result, err
 }
 
+// ---------------------------------------------------------------------------
+// Window identity methods
+// ---------------------------------------------------------------------------
+
+func (r *ResilientStore) UpsertWindowIdentity(ctx context.Context, wi core.WindowIdentity) (*core.WindowIdentity, error) {
+	var result *core.WindowIdentity
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.UpsertWindowIdentity(ctx, wi)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+func (r *ResilientStore) ListWindowIdentities(ctx context.Context, project string) ([]core.WindowIdentity, error) {
+	var result []core.WindowIdentity
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.ListWindowIdentities(ctx, project)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+func (r *ResilientStore) ExpireWindowIdentity(ctx context.Context, project, windowUUID string) error {
+	return r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			return r.inner.ExpireWindowIdentity(ctx, project, windowUUID)
+		})
+	})
+}
+
+func (r *ResilientStore) LookupWindowIdentity(ctx context.Context, project, windowUUID string) (*core.WindowIdentity, error) {
+	var result *core.WindowIdentity
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.LookupWindowIdentity(ctx, project, windowUUID)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
 // Close delegates directly to the inner store without CB or retry.
 func (r *ResilientStore) Close() error {
 	return r.inner.Close()
