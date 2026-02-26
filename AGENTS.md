@@ -50,45 +50,11 @@ Intermute is the L1 (core) multi-agent coordination and messaging service for th
 ## Directory Structure
 
 ```
-cmd/intermute/       Entry point; wires store, auth, WebSocket hub, sweeper, HTTP service
-client/              Go SDK for agents (messaging, domain CRUD, WebSocket subscriptions)
-internal/
-  auth/              Keyring loading, HTTP middleware, dev key bootstrapping
-  cli/               CLI helpers (key file initialization)
-  core/              Domain types: Message, Agent, Event, Reservation, Spec, Epic, Story, Task, Insight, Session, CUJ, ContactPolicy
-  glob/              NFA glob overlap detection for reservation conflict checking
-  http/              REST handlers, routers (NewRouter, NewDomainRouter), DomainService
-  names/             Culture ship-style name generator for agents
-  server/            HTTP + Unix socket dual-listen server
-  storage/           Store and DomainStore interfaces, InMemory implementation
-    sqlite/          SQLite implementation: schema, migrations, ResilientStore, CircuitBreaker, Sweeper, CoordinationBridge, query logger, retry
-  ws/                WebSocket hub for real-time message delivery
-pkg/embedded/        Embeddable server for in-process use (New, NewWithAuth)
-scripts/             Utilities (check-file-conflict.sh, session-status.sh, worktree-*.sh)
+cmd/intermute/    Entry point, CLI flags, component wiring
+client/           Go SDK (messaging, domain CRUD, WebSocket)
+internal/         auth/, core/ (domain types), glob/ (NFA overlap), http/ (handlers+routers), storage/ (Store interfaces + sqlite/), ws/ (WebSocket hub), server/ (dual-listen), names/ (ship name gen)
+pkg/embedded/     Embeddable server for in-process use (Autarch uses this)
 ```
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `cmd/intermute/main.go` | Entry point; wires all components, CLI flags |
-| `internal/http/router.go` | Messaging-only router (NewRouter) |
-| `internal/http/router_domain.go` | Full router with messaging + domain + health (NewDomainRouter) |
-| `internal/http/service.go` | Service struct with broadcast rate limiter |
-| `internal/http/handlers_*.go` | REST handlers for agents, messages, threads, reservations, domain, health |
-| `internal/storage/storage.go` | Store interface + InMemory implementation |
-| `internal/storage/domain.go` | DomainStore interface (extends Store with CRUD for all entities) |
-| `internal/storage/sqlite/schema.sql` | DDL for all 16 tables and indexes |
-| `internal/storage/sqlite/resilient.go` | ResilientStore: circuit breaker + retry wrapper |
-| `internal/storage/sqlite/sweeper.go` | Background expired reservation cleanup |
-| `internal/storage/sqlite/coordination_bridge.go` | Dual-write mirror to Intercore coordination_locks |
-| `internal/core/models.go` | Message, Agent, Event, Reservation, RecipientStatus, StaleAck types |
-| `internal/core/domain.go` | Spec, Epic, Story, Task, Insight, Session, CUJ types; ContactPolicy; sentinel errors |
-| `internal/glob/overlap.go` | NFA glob pattern overlap detection (DoS guard: max 50 tokens, 10 wildcards) |
-| `pkg/embedded/server.go` | Embeddable server (Config, New, NewWithAuth, Start, Stop, URL, Store) |
-| `client/client.go` | Go SDK: Register, Send, Inbox, Heartbeat, Reservations |
-| `client/domain.go` | Go SDK: domain entity CRUD (specs, epics, stories, tasks, insights, sessions) |
-| `client/websocket.go` | Go SDK: WebSocket subscription with auto-reconnect |
 
 ## API Endpoints
 
@@ -281,25 +247,7 @@ go build ./cmd/autarch/  # Verify it compiles
 
 ## Testing
 
-```bash
-go test ./...            # All tests
-go test -v ./...         # Verbose
-go test -cover ./...     # Coverage
-go test -race ./...      # Race detection
-go test ./internal/storage/sqlite  # Single package
-```
-
-**Test patterns:**
-- `sqlite_test.go`: In-memory SQLite with cursor/thread/migration tests
-- `handlers_*_test.go`: httptest.Server integration tests
-- `client_test.go` / `domain_test.go`: Mock server for SDK validation
-- `circuitbreaker_test.go`, `retry_test.go`: Resilience layer unit tests
-- `coordination_bridge_test.go`: Dual-write bridge tests
-- `contact_policy_test.go`, `topic_test.go`: Feature-specific tests
-- `race_test.go`: Concurrent access tests
-- `smoke_test.go`: End-to-end integration smoke test
-- Total: 158 test functions across 27 test files
-- Auth bypass in tests: `httptest.NewServer` binds to 127.0.0.1, so localhost auth bypass applies
+158 test functions across 27 files. `go test ./...` or `go test -race ./...`. Auth bypass in tests works because `httptest.NewServer` binds to 127.0.0.1.
 
 ## Operational Notes
 
