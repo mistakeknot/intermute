@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -46,13 +44,12 @@ func NewCoordinationBridge(dbPath string) (*CoordinationBridge, error) {
 // normalizeScope converts Intermute's project identifier to the canonical
 // absolute path that Intercore uses for scope. Mismatched scopes cause false
 // negatives in cross-system conflict detection.
+//
+// Only uses filepath.Abs — NOT git rev-parse, which would resolve relative to
+// Intermute's CWD rather than the project's, silently breaking scope matching.
 func normalizeScope(project string) string {
 	if filepath.IsAbs(project) {
 		return filepath.Clean(project)
-	}
-	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
-	if err == nil {
-		return strings.TrimSpace(string(out))
 	}
 	abs, err := filepath.Abs(project)
 	if err != nil {
