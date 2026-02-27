@@ -48,6 +48,10 @@ Almost every API operation is project-scoped (`?project=...` and composite keys 
 
 Agents issue commands via HTTP and observe state changes through broadcast events by project/agent. This model avoids polling for common workflows and makes cooperative updates easier to process by consumers.
 
+### 6) Observable coordination
+
+Every reservation, message, and heartbeat produces a durable event. Coordination failures — conflicts, stale locks, missed heartbeats — are the highest-signal data for agent quality (PHILOSOPHY.md: instrument first, optimize later). Intermute events feed Interspect's coordination quality analysis.
+
 ## Current risk envelope
 
 Intermute does not replace filesystem locks in every runtime. It coordinates agents at the application layer and depends on participating services and agent clients to use it consistently for intended contention avoidance.
