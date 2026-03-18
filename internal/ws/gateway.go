@@ -15,12 +15,24 @@ import (
 const writeTimeout = 5 * time.Second
 
 type Hub struct {
-	mu    sync.RWMutex
-	conns map[string]map[string]map[*websocket.Conn]struct{}
+	mu       sync.RWMutex
+	conns    map[string]map[string]map[*websocket.Conn]struct{}
+	numConns int // total connection count for pre-allocation
+	snapPool sync.Pool
 }
 
 func NewHub() *Hub {
-	return &Hub{conns: make(map[string]map[string]map[*websocket.Conn]struct{})}
+	h := &Hub{conns: make(map[string]map[string]map[*websocket.Conn]struct{})}
+	h.snapPool.New = func() any {
+		return &snapBuf{entries: make([]connEntry, 0, 16)}
+	}
+	return h
+}
+
+// snapBuf is a pooled buffer for snapshot results. Using a struct pointer
+// avoids allocating a new *[]connEntry on every Put.
+type snapBuf struct {
+	entries []connEntry
 }
 
 func (h *Hub) Handler() http.HandlerFunc {
@@ -71,11 +83,12 @@ type connEntry struct {
 }
 
 func (h *Hub) Broadcast(project, agent string, event any) {
-	entries := h.snapshot(project, agent)
-	if len(entries) == 0 {
+	buf := h.snapshot(project, agent)
+	if len(buf.entries) == 0 {
+		h.putSnapshot(buf)
 		return
 	}
-	for _, e := range entries {
+	for _, e := range buf.entries {
 		ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 		err := wsjson.Write(ctx, e.conn, event)
 		cancel()
@@ -86,35 +99,56 @@ func (h *Hub) Broadcast(project, agent string, event any) {
 			}(e)
 		}
 	}
+	h.putSnapshot(buf)
 }
 
-func (h *Hub) snapshot(project, agent string) []connEntry {
+func (h *Hub) snapshot(project, agent string) *snapBuf {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	var out []connEntry
+
+	buf := h.snapPool.Get().(*snapBuf)
+	buf.entries = buf.entries[:0]
+
+	// Pre-grow to known total if the pooled slice is too small.
+	if cap(buf.entries) < h.numConns {
+		buf.entries = make([]connEntry, 0, h.numConns)
+	}
+
 	collectAgent := func(proj string, m map[string]map[*websocket.Conn]struct{}, target string) {
 		if target == "" {
 			for agentName, conns := range m {
 				for conn := range conns {
-					out = append(out, connEntry{conn: conn, project: proj, agent: agentName})
+					buf.entries = append(buf.entries, connEntry{conn: conn, project: proj, agent: agentName})
 				}
 			}
 			return
 		}
 		for conn := range m[target] {
-			out = append(out, connEntry{conn: conn, project: proj, agent: target})
+			buf.entries = append(buf.entries, connEntry{conn: conn, project: proj, agent: target})
 		}
 	}
 	if project != "" {
 		if perAgent, ok := h.conns[project]; ok {
 			collectAgent(project, perAgent, agent)
 		}
-		return out
+	} else {
+		for proj, perAgent := range h.conns {
+			collectAgent(proj, perAgent, agent)
+		}
 	}
-	for proj, perAgent := range h.conns {
-		collectAgent(proj, perAgent, agent)
+
+	return buf
+}
+
+// putSnapshot returns a snapshot buffer to the pool. Callers must not use
+// the buffer after this call.
+func (h *Hub) putSnapshot(buf *snapBuf) {
+	// Clear references so GC can collect closed conns.
+	for i := range buf.entries {
+		buf.entries[i] = connEntry{}
 	}
-	return out
+	buf.entries = buf.entries[:0]
+	h.snapPool.Put(buf)
 }
 
 func (h *Hub) add(project, agent string, conn *websocket.Conn) {
@@ -131,6 +165,7 @@ func (h *Hub) add(project, agent string, conn *websocket.Conn) {
 		perProject[agent] = perAgent
 	}
 	perAgent[conn] = struct{}{}
+	h.numConns++
 }
 
 func (h *Hub) remove(project, agent string, conn *websocket.Conn) {
@@ -145,6 +180,7 @@ func (h *Hub) remove(project, agent string, conn *websocket.Conn) {
 		return
 	}
 	delete(perAgent, conn)
+	h.numConns--
 	if len(perAgent) == 0 {
 		delete(perProject, agent)
 	}
