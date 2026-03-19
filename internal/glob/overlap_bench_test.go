@@ -32,6 +32,46 @@ func BenchmarkPatternsOverlapCharClass(b *testing.B) {
 	}
 }
 
+func BenchmarkNormalizedOverlapLiteral(b *testing.B) {
+	a, _ := NormalizePattern("src/main.go")
+	bp, _ := NormalizePattern("src/main.go")
+	for b.Loop() {
+		_, _ = NormalizedOverlap(a, bp)
+	}
+}
+
+func BenchmarkNormalizedOverlapWildcard(b *testing.B) {
+	a, _ := NormalizePattern("src/*.go")
+	bp, _ := NormalizePattern("src/main.go")
+	for b.Loop() {
+		_, _ = NormalizedOverlap(a, bp)
+	}
+}
+
+func BenchmarkNormalizedOverlapComplex(b *testing.B) {
+	a, _ := NormalizePattern("internal/*/handler/*.go")
+	bp, _ := NormalizePattern("internal/*/handler/auth.go")
+	for b.Loop() {
+		_, _ = NormalizedOverlap(a, bp)
+	}
+}
+
+func BenchmarkNormalizedOverlapNoMatch(b *testing.B) {
+	a, _ := NormalizePattern("src/main.go")
+	bp, _ := NormalizePattern("lib/util.go")
+	for b.Loop() {
+		_, _ = NormalizedOverlap(a, bp)
+	}
+}
+
+func BenchmarkNormalizedOverlapCharClass(b *testing.B) {
+	a, _ := NormalizePattern("src/[a-z]*.go")
+	bp, _ := NormalizePattern("src/[A-Z]*.go")
+	for b.Loop() {
+		_, _ = NormalizedOverlap(a, bp)
+	}
+}
+
 func BenchmarkValidateComplexitySimple(b *testing.B) {
 	for b.Loop() {
 		_ = ValidateComplexity("src/*.go")

@@ -65,28 +65,64 @@ func ValidateComplexity(pattern string) error {
 	return nil
 }
 
-// PatternsOverlap returns true if two glob patterns can match the same path.
-func PatternsOverlap(a, b string) (bool, error) {
-	a = filepath.ToSlash(a)
-	b = filepath.ToSlash(b)
+// NormalizedPattern holds a pre-slashed, pre-split, pre-parsed glob pattern
+// for repeated overlap checks without redundant normalization.
+type NormalizedPattern struct {
+	raw      string
+	segments []string
+	parsed   [][]token // parsed tokens per segment, lazily populated
+}
 
-	segmentsA := strings.Split(a, "/")
-	segmentsB := strings.Split(b, "/")
-	if len(segmentsA) != len(segmentsB) {
+// NormalizePattern pre-processes a glob pattern for use with NormalizedOverlap.
+// It performs filepath.ToSlash and strings.Split once upfront and pre-parses
+// each segment into tokens.
+func NormalizePattern(pattern string) (NormalizedPattern, error) {
+	slashed := filepath.ToSlash(pattern)
+	segments := strings.Split(slashed, "/")
+	parsed := make([][]token, len(segments))
+	for i, seg := range segments {
+		tokens, err := parseSegment(seg)
+		if err != nil {
+			return NormalizedPattern{}, err
+		}
+		parsed[i] = tokens
+	}
+	return NormalizedPattern{
+		raw:      slashed,
+		segments: segments,
+		parsed:   parsed,
+	}, nil
+}
+
+// NormalizedOverlap returns true if two pre-normalized patterns can match the
+// same path. It skips all string normalization and parsing, operating directly
+// on the pre-computed token slices.
+func NormalizedOverlap(a, b NormalizedPattern) (bool, error) {
+	if len(a.segments) != len(b.segments) {
 		return false, nil
 	}
 
-	for i := range segmentsA {
-		overlap, err := segmentPatternsOverlap(segmentsA[i], segmentsB[i])
-		if err != nil {
-			return false, err
-		}
+	for i := range a.parsed {
+		overlap := segmentTokensOverlap(a.parsed[i], b.parsed[i])
 		if !overlap {
 			return false, nil
 		}
 	}
 
 	return true, nil
+}
+
+// PatternsOverlap returns true if two glob patterns can match the same path.
+func PatternsOverlap(a, b string) (bool, error) {
+	na, err := NormalizePattern(a)
+	if err != nil {
+		return false, err
+	}
+	nb, err := NormalizePattern(b)
+	if err != nil {
+		return false, err
+	}
+	return NormalizedOverlap(na, nb)
 }
 
 func segmentPatternsOverlap(a, b string) (bool, error) {
@@ -99,6 +135,13 @@ func segmentPatternsOverlap(a, b string) (bool, error) {
 		return false, err
 	}
 
+	return segmentTokensOverlap(tokensA, tokensB), nil
+}
+
+// segmentTokensOverlap checks if two pre-parsed token slices can match the
+// same string. This is the core NFA intersection logic shared by both the
+// string-based and pre-normalized paths.
+func segmentTokensOverlap(tokensA, tokensB []token) bool {
 	type state struct {
 		i int
 		j int
@@ -130,7 +173,7 @@ func segmentPatternsOverlap(a, b string) (bool, error) {
 	for idx := 0; idx < len(queue); idx++ {
 		curr := queue[idx]
 		if curr.i == len(tokensA) && curr.j == len(tokensB) {
-			return true, nil
+			return true
 		}
 		if curr.i == len(tokensA) || curr.j == len(tokensB) {
 			continue
@@ -145,7 +188,7 @@ func segmentPatternsOverlap(a, b string) (bool, error) {
 		addClosure(state{i: aNext, j: bNext}, seen, &queue)
 	}
 
-	return false, nil
+	return false
 }
 
 func tokenConsume(tokens []token, idx int) (next int, ranges []runeRange) {
