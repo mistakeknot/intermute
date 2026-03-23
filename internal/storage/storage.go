@@ -61,6 +61,8 @@ type Store interface {
 	ListWindowIdentities(ctx context.Context, project string) ([]core.WindowIdentity, error)
 	ExpireWindowIdentity(ctx context.Context, project, windowUUID string) error
 	LookupWindowIdentity(ctx context.Context, project, windowUUID string) (*core.WindowIdentity, error)
+	// Agent token verification
+	AgentForToken(ctx context.Context, token string) (agentID string, err error)
 }
 
 // InMemory is a minimal in-memory store for tests.
@@ -241,6 +243,19 @@ func (m *InMemory) RegisterAgent(_ context.Context, agent core.Agent) (core.Agen
 	}
 	m.agents[agent.ID] = agent
 	return agent, nil
+}
+
+// AgentForToken returns the agent ID bound to the given token.
+func (m *InMemory) AgentForToken(_ context.Context, token string) (string, error) {
+	if token == "" {
+		return "", fmt.Errorf("empty token")
+	}
+	for _, agent := range m.agents {
+		if agent.Token == token {
+			return agent.ID, nil
+		}
+	}
+	return "", fmt.Errorf("token not found")
 }
 
 func (m *InMemory) Heartbeat(_ context.Context, project, agentID string) (core.Agent, error) {

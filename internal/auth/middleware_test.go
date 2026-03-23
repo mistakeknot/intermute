@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,6 +87,108 @@ func TestXForwardedForSpoofing(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for spoofed x-forwarded-for, got %d", rr.Code)
+	}
+}
+
+func TestAgentTokenMismatchBlocked(t *testing.T) {
+	ring := &Keyring{AllowLocalhostWithoutAuth: true, keyToProject: map[string]string{}}
+	// Token "tok-A" is bound to agent "agent-A"
+	lookup := func(_ context.Context, token string) (string, error) {
+		if token == "tok-A" {
+			return "agent-A", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+	mw := Middleware(ring, lookup)
+
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("handler should not be reached for mismatched token")
+	}))
+
+	// Agent B sends token belonging to Agent A → 403
+	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Agent-ID", "agent-B")
+	req.Header.Set("X-Agent-Token", "tok-A")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+}
+
+func TestAgentTokenMatchPasses(t *testing.T) {
+	ring := &Keyring{AllowLocalhostWithoutAuth: true, keyToProject: map[string]string{}}
+	lookup := func(_ context.Context, token string) (string, error) {
+		if token == "tok-A" {
+			return "agent-A", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+	mw := Middleware(ring, lookup)
+
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		info, ok := FromContext(r.Context())
+		if !ok || info.AgentID != "agent-A" {
+			t.Fatalf("expected agent-A, got %s", info.AgentID)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Agent-ID", "agent-A")
+	req.Header.Set("X-Agent-Token", "tok-A")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestAgentTokenWithoutIDBlocked(t *testing.T) {
+	ring := &Keyring{AllowLocalhostWithoutAuth: true, keyToProject: map[string]string{}}
+	lookup := func(_ context.Context, token string) (string, error) {
+		if token == "tok-A" {
+			return "agent-A", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+	mw := Middleware(ring, lookup)
+
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("handler should not be reached for bound token without X-Agent-ID")
+	}))
+
+	// Bound token sent without X-Agent-ID → 403 (header-omission bypass prevention)
+	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Agent-Token", "tok-A")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rr.Code)
+	}
+}
+
+func TestNoTokenHeaderPasses(t *testing.T) {
+	ring := &Keyring{AllowLocalhostWithoutAuth: true, keyToProject: map[string]string{}}
+	lookup := func(_ context.Context, token string) (string, error) {
+		return "agent-A", nil
+	}
+	mw := Middleware(ring, lookup)
+
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// No X-Agent-Token header → passes (backward compat)
+	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 }
 

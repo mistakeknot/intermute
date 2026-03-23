@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS agents (
   session_id TEXT,
   name TEXT NOT NULL,
   project TEXT,
+  token TEXT,
   capabilities_json TEXT,
   metadata_json TEXT,
   status TEXT,

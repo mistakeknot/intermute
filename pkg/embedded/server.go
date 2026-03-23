@@ -185,7 +185,7 @@ func NewWithAuth(cfg Config) (*Server, error) {
 	svc := httpapi.NewDomainService(store).WithBroadcaster(hub)
 
 	// Create router with auth middleware
-	router := httpapi.NewDomainRouter(svc, hub.Handler(), auth.Middleware(keyring))
+	router := httpapi.NewDomainRouter(svc, hub.Handler(), auth.Middleware(keyring, store.AgentForToken))
 
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)

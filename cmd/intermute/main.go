@@ -36,12 +36,12 @@ func main() {
 
 func serveCmd() *cobra.Command {
 	var (
-		port              int
-		host              string
-		dbPath            string
-		socketPath        string
-		coordDualWrite    bool
-		intercoreDBPath   string
+		port            int
+		host            string
+		dbPath          string
+		socketPath      string
+		coordDualWrite  bool
+		intercoreDBPath string
 	)
 
 	cmd := &cobra.Command{
@@ -102,7 +102,7 @@ func serveCmd() *cobra.Command {
 			sweeper.Start(context.Background())
 
 			svc := httpapi.NewDomainService(resilient).WithBroadcaster(hub)
-			router := httpapi.NewDomainRouter(svc, hub.Handler(), auth.Middleware(keyring))
+			router := httpapi.NewDomainRouter(svc, hub.Handler(), auth.Middleware(keyring, store.AgentForToken))
 
 			addr := fmt.Sprintf("%s:%d", host, port)
 			srv, err := server.New(server.Config{Addr: addr, SocketPath: socketPath, Handler: router})

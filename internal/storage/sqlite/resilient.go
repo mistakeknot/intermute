@@ -855,6 +855,19 @@ func (r *ResilientStore) LookupWindowIdentity(ctx context.Context, project, wind
 	return result, err
 }
 
+// AgentForToken returns the agent ID bound to the given registration token.
+func (r *ResilientStore) AgentForToken(ctx context.Context, token string) (string, error) {
+	var result string
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.AgentForToken(ctx, token)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
 // Close delegates directly to the inner store without CB or retry.
 func (r *ResilientStore) Close() error {
 	return r.inner.Close()

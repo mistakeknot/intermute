@@ -54,6 +54,7 @@ type Agent struct {
 	SessionID     string
 	Name          string
 	Project       string
+	Token         string // Registration-time token for identity verification
 	Capabilities  []string
 	Metadata      map[string]string
 	Status        string

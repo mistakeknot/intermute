@@ -25,6 +25,7 @@ type registerAgentResponse struct {
 	AgentID   string `json:"agent_id"`
 	SessionID string `json:"session_id"`
 	Name      string `json:"name"`
+	Token     string `json:"token,omitempty"`
 	Cursor    uint64 `json:"cursor"`
 }
 
@@ -153,6 +154,7 @@ func (s *Service) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 		AgentID:   agent.ID,
 		SessionID: agent.SessionID,
 		Name:      agent.Name,
+		Token:     agent.Token,
 		Cursor:    0,
 	})
 }

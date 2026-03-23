@@ -2,8 +2,10 @@ package sqlite
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -96,6 +98,9 @@ func applySchema(db *sql.DB) error {
 		return err
 	}
 	if err := migrateWindowIdentities(db); err != nil {
+		return err
+	}
+	if err := migrateAgentToken(db); err != nil {
 		return err
 	}
 	return nil
@@ -751,6 +756,15 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 		return core.Agent{}, fmt.Errorf("marshal metadata: %w", err)
 	}
 
+	// Generate registration token for identity verification
+	if agent.Token == "" {
+		tok, err := generateAgentToken()
+		if err != nil {
+			return core.Agent{}, err
+		}
+		agent.Token = tok
+	}
+
 	// Session identity reuse: if session_id is provided, check for existing agent
 	if agent.SessionID != "" {
 		if _, err := uuid.Parse(agent.SessionID); err != nil {
@@ -783,10 +797,10 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 			if activeCount > 0 {
 				return core.Agent{}, core.ErrActiveSessionConflict
 			}
-			// Reuse the existing agent: update its fields, keep its ID
+			// Reuse the existing agent: update its fields and token, keep its ID
 			if _, err := tx.Exec(
-				`UPDATE agents SET name=?, capabilities_json=?, metadata_json=?, status=?, contact_policy=?, last_seen=? WHERE id=?`,
-				agent.Name, string(capsJSON), string(metaJSON), agent.Status,
+				`UPDATE agents SET name=?, token=?, capabilities_json=?, metadata_json=?, status=?, contact_policy=?, last_seen=? WHERE id=?`,
+				agent.Name, agent.Token, string(capsJSON), string(metaJSON), agent.Status,
 				string(agent.ContactPolicy), agent.LastSeen.Format(time.RFC3339Nano), existingID,
 			); err != nil {
 				return core.Agent{}, fmt.Errorf("reuse agent: %w", err)
@@ -805,9 +819,9 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 			agent.ID = uuid.NewString()
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO agents (id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			agent.ID, agent.SessionID, agent.Name, agent.Project, string(capsJSON), string(metaJSON), agent.Status,
+			`INSERT INTO agents (id, session_id, name, project, token, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			agent.ID, agent.SessionID, agent.Name, agent.Project, agent.Token, string(capsJSON), string(metaJSON), agent.Status,
 			string(agent.ContactPolicy), agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
 		); err != nil {
 			return core.Agent{}, fmt.Errorf("register agent: %w", err)
@@ -826,12 +840,12 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 		agent.SessionID = uuid.NewString()
 	}
 	if _, err := s.db.Exec(
-		`INSERT INTO agents (id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO agents (id, session_id, name, project, token, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, name=excluded.name, project=excluded.project,
-		 capabilities_json=excluded.capabilities_json, metadata_json=excluded.metadata_json, status=excluded.status,
+		 token=excluded.token, capabilities_json=excluded.capabilities_json, metadata_json=excluded.metadata_json, status=excluded.status,
 		 contact_policy=excluded.contact_policy, last_seen=excluded.last_seen`,
-		agent.ID, agent.SessionID, agent.Name, agent.Project, string(capsJSON), string(metaJSON), agent.Status,
+		agent.ID, agent.SessionID, agent.Name, agent.Project, agent.Token, string(capsJSON), string(metaJSON), agent.Status,
 		string(agent.ContactPolicy), agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
 	); err != nil {
 		return core.Agent{}, fmt.Errorf("register agent: %w", err)
@@ -1975,4 +1989,46 @@ func parseWindowIdentity(id, project, windowUUID, agentID, displayName, createdA
 		wi.ExpiresAt = &t
 	}
 	return wi, nil
+}
+
+// migrateAgentToken adds the token column to the agents table if missing.
+func migrateAgentToken(db *sql.DB) error {
+	if !tableExists(db, "agents") {
+		return nil
+	}
+	if !tableHasColumn(db, "agents", "token") {
+		if _, err := db.Exec(`ALTER TABLE agents ADD COLUMN token TEXT`); err != nil {
+			return fmt.Errorf("add token column: %w", err)
+		}
+	}
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_agents_token ON agents(token) WHERE token IS NOT NULL AND token != ''`)
+	if err != nil {
+		return fmt.Errorf("create token index: %w", err)
+	}
+	return nil
+}
+
+// generateAgentToken creates a cryptographically random URL-safe token.
+func generateAgentToken() (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate agent token: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// AgentForToken returns the agent ID bound to the given registration token.
+func (s *Store) AgentForToken(_ context.Context, token string) (string, error) {
+	if token == "" {
+		return "", fmt.Errorf("empty token")
+	}
+	var agentID string
+	err := s.db.QueryRow(`SELECT id FROM agents WHERE token = ?`, token).Scan(&agentID)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("token not found")
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup agent token: %w", err)
+	}
+	return agentID, nil
 }

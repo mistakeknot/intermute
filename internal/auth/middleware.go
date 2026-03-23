@@ -29,13 +29,31 @@ func FromContext(ctx context.Context) (Info, bool) {
 	return v, ok
 }
 
-func Middleware(ring *Keyring) func(http.Handler) http.Handler {
+// TokenLookup resolves a registration token to its bound agent ID.
+// Returns ("", error) if the token is not found.
+type TokenLookup func(ctx context.Context, token string) (agentID string, err error)
+
+func Middleware(ring *Keyring, lookupToken ...TokenLookup) func(http.Handler) http.Handler {
 	if ring == nil {
 		ring = defaultKeyring()
+	}
+	var lookup TokenLookup
+	if len(lookupToken) > 0 {
+		lookup = lookupToken[0]
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			agentID := strings.TrimSpace(r.Header.Get("X-Agent-ID"))
+			agentToken := strings.TrimSpace(r.Header.Get("X-Agent-Token"))
+
+			// Token-bound identity verification (applies to both code paths)
+			if lookup != nil && agentToken != "" {
+				if err := verifyAgentToken(r.Context(), lookup, agentID, agentToken); err != nil {
+					writeForbidden(w, err.Error())
+					return
+				}
+			}
+
 			if ring.AllowLocalhostWithoutAuth && isLocalRequest(r) {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), contextKey{}, Info{Mode: ModeLocalhost, AgentID: agentID, Localhost: true})))
 				return
@@ -49,6 +67,33 @@ func Middleware(ring *Keyring) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), contextKey{}, info)))
 		})
 	}
+}
+
+// verifyAgentToken checks that X-Agent-Token is bound to X-Agent-ID.
+func verifyAgentToken(ctx context.Context, lookup TokenLookup, agentID, token string) error {
+	registered, err := lookup(ctx, token)
+	if err != nil {
+		// Token not found — let it pass (could be pre-upgrade agent)
+		return nil
+	}
+	if agentID == "" {
+		// Token is bound but X-Agent-ID omitted — reject (header-omission bypass)
+		return &identityError{msg: "agent token is bound but X-Agent-ID header is missing"}
+	}
+	if registered != agentID {
+		return &identityError{msg: "agent identity mismatch"}
+	}
+	return nil
+}
+
+type identityError struct{ msg string }
+
+func (e *identityError) Error() string { return e.msg }
+
+func writeForbidden(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 func authorize(r *http.Request, ring *Keyring) (string, bool) {
