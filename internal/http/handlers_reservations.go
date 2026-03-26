@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -117,6 +118,10 @@ func (s *Service) createReservation(w http.ResponseWriter, r *http.Request) {
 	ttl := 30 * time.Minute
 	if req.TTLMinutes > 0 {
 		ttl = time.Duration(req.TTLMinutes) * time.Minute
+	}
+	// TTL cap is enforced in storage layer, but log if request exceeds it
+	if ttl > 24*time.Hour {
+		slog.Warn("reservation TTL capped", "requested_minutes", req.TTLMinutes, "max_minutes", 1440)
 	}
 
 	res, err := s.store.Reserve(r.Context(), core.Reservation{

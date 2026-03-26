@@ -25,6 +25,15 @@ import (
 //go:embed schema.sql
 var schema string
 
+const (
+	// MaxReservationsPerAgent is the maximum number of active (unreleased, unexpired)
+	// reservations a single agent can hold simultaneously.
+	MaxReservationsPerAgent = 10
+
+	// MaxReservationTTL is the maximum allowed TTL for a reservation.
+	MaxReservationTTL = 24 * time.Hour
+)
+
 type Store struct {
 	db     dbHandle
 	bridge *CoordinationBridge
@@ -1443,6 +1452,10 @@ func (s *Store) Reserve(_ context.Context, r core.Reservation) (*core.Reservatio
 	if r.TTL == 0 {
 		r.TTL = 30 * time.Minute // Default TTL
 	}
+	// Cap TTL to maximum allowed
+	if r.TTL > MaxReservationTTL {
+		r.TTL = MaxReservationTTL
+	}
 	r.ExpiresAt = now.Add(r.TTL) // Negative TTL will create already-expired reservation
 
 	// Validate pattern complexity to prevent NFA state explosion.
@@ -1460,13 +1473,35 @@ func (s *Store) Reserve(_ context.Context, r core.Reservation) (*core.Reservatio
 		exclusive = 1
 	}
 
-	tx, err := s.db.BeginTx(context.Background(), nil)
+	// IMMEDIATE transaction: acquires write lock immediately so per-agent count
+	// check is not vulnerable to TOCTOU with concurrent Reserve() calls.
+	tx, err := s.db.BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return nil, fmt.Errorf("begin reservation tx: %w", err)
 	}
 	defer func() {
 		_ = tx.Rollback()
 	}()
+
+	// Sweep expired reservations (opportunistic cleanup, same transaction)
+	_, _ = tx.Exec(
+		`UPDATE file_reservations SET released_at = ? WHERE project = ? AND released_at IS NULL AND expires_at <= ?`,
+		now.Format(time.RFC3339Nano), r.Project, now.Format(time.RFC3339Nano),
+	)
+
+	// Per-agent limit check
+	var activeCount int
+	err = tx.QueryRow(
+		`SELECT COUNT(*) FROM file_reservations WHERE agent_id = ? AND project = ? AND released_at IS NULL AND expires_at > ?`,
+		r.AgentID, r.Project, now.Format(time.RFC3339Nano),
+	).Scan(&activeCount)
+	if err != nil {
+		return nil, fmt.Errorf("count agent reservations: %w", err)
+	}
+	if activeCount >= MaxReservationsPerAgent {
+		return nil, fmt.Errorf("agent %q has %d active reservations (max %d): release existing reservations first",
+			r.AgentID, activeCount, MaxReservationsPerAgent)
+	}
 
 	activeRows, err := tx.Query(
 		`SELECT r.id, r.agent_id, COALESCE(a.name, r.agent_id), r.path_pattern, r.exclusive, r.reason, r.expires_at
