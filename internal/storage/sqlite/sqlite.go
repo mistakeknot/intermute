@@ -303,6 +303,66 @@ func (s *Store) upsertMessageTx(tx *sql.Tx, project string, msg core.Message) er
 	return nil
 }
 
+// scanMessageRow scans a single row from a messages query into a core.Message.
+// The query must SELECT exactly 14 columns in this order:
+// cursor, project, message_id, thread_id, from_agent, to_json, cc_json, bcc_json,
+// subject, body, importance, ack_required, topic, created_at.
+func scanMessageRow(rows *sql.Rows) (core.Message, error) {
+	var (
+		cur                                                                                   int64
+		proj                                                                                  string
+		msgID, threadID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance, topic string
+		ackRequired                                                                           int
+		createdAt                                                                             string
+	)
+	if err := rows.Scan(&cur, &proj, &msgID, &threadID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &topic, &createdAt); err != nil {
+		return core.Message{}, err
+	}
+	var to, cc, bcc []string
+	if err := json.Unmarshal([]byte(toJSON), &to); err != nil {
+		log.Printf("WARN: corrupt to_json for message %s: %v", msgID, err)
+	}
+	if err := json.Unmarshal([]byte(ccJSON), &cc); err != nil {
+		log.Printf("WARN: corrupt cc_json for message %s: %v", msgID, err)
+	}
+	if err := json.Unmarshal([]byte(bccJSON), &bcc); err != nil {
+		log.Printf("WARN: corrupt bcc_json for message %s: %v", msgID, err)
+	}
+	parsed, _ := time.Parse(time.RFC3339Nano, createdAt)
+	return core.Message{
+		ID:          msgID,
+		ThreadID:    threadID,
+		Project:     proj,
+		From:        fromAgent,
+		To:          to,
+		CC:          cc,
+		BCC:         bcc,
+		Subject:     subject,
+		Topic:       topic,
+		Body:        body,
+		Importance:  importance,
+		AckRequired: ackRequired == 1,
+		CreatedAt:   parsed,
+		Cursor:      uint64(cur),
+	}, nil
+}
+
+// collectMessages iterates rows and returns a slice of Messages.
+func collectMessages(rows *sql.Rows) ([]core.Message, error) {
+	var msgs []core.Message
+	for rows.Next() {
+		msg, err := scanMessageRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return msgs, nil
+}
+
 func (s *Store) InboxSince(_ context.Context, project, agent string, cursor uint64, limit int) ([]core.Message, error) {
 	if limit <= 0 {
 		limit = 100
@@ -328,51 +388,11 @@ func (s *Store) InboxSince(_ context.Context, project, agent string, cursor uint
 		return nil, fmt.Errorf("query inbox: %w", err)
 	}
 	defer rows.Close()
-
-	var out []core.Message
-	for rows.Next() {
-		var (
-			cur                                                                                   int64
-			proj                                                                                  string
-			msgID, threadID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance, topic string
-			ackRequired                                                                           int
-			createdAt                                                                             string
-		)
-		if err := rows.Scan(&cur, &proj, &msgID, &threadID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &topic, &createdAt); err != nil {
-			return nil, fmt.Errorf("scan inbox: %w", err)
-		}
-		var to, cc, bcc []string
-		if err := json.Unmarshal([]byte(toJSON), &to); err != nil {
-			log.Printf("WARN: corrupt to_json for message %s: %v", msgID, err)
-		}
-		if err := json.Unmarshal([]byte(ccJSON), &cc); err != nil {
-			log.Printf("WARN: corrupt cc_json for message %s: %v", msgID, err)
-		}
-		if err := json.Unmarshal([]byte(bccJSON), &bcc); err != nil {
-			log.Printf("WARN: corrupt bcc_json for message %s: %v", msgID, err)
-		}
-		parsed, _ := time.Parse(time.RFC3339Nano, createdAt)
-		out = append(out, core.Message{
-			ID:          msgID,
-			ThreadID:    threadID,
-			Project:     proj,
-			From:        fromAgent,
-			To:          to,
-			CC:          cc,
-			BCC:         bcc,
-			Subject:     subject,
-			Topic:       topic,
-			Body:        body,
-			Importance:  importance,
-			AckRequired: ackRequired == 1,
-			CreatedAt:   parsed,
-			Cursor:      uint64(cur),
-		})
+	msgs, err := collectMessages(rows)
+	if err != nil {
+		return nil, fmt.Errorf("inbox: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows: %w", err)
-	}
-	return out, nil
+	return msgs, nil
 }
 
 func (s *Store) ThreadMessages(_ context.Context, project, threadID string, cursor uint64) ([]core.Message, error) {
@@ -389,51 +409,11 @@ func (s *Store) ThreadMessages(_ context.Context, project, threadID string, curs
 		return nil, fmt.Errorf("query thread: %w", err)
 	}
 	defer rows.Close()
-
-	var out []core.Message
-	for rows.Next() {
-		var (
-			cur                                                                               int64
-			proj                                                                              string
-			msgID, thID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance, topic string
-			ackRequired                                                                       int
-			createdAt                                                                         string
-		)
-		if err := rows.Scan(&cur, &proj, &msgID, &thID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &topic, &createdAt); err != nil {
-			return nil, fmt.Errorf("scan thread: %w", err)
-		}
-		var to, cc, bcc []string
-		if err := json.Unmarshal([]byte(toJSON), &to); err != nil {
-			log.Printf("WARN: corrupt to_json for message %s: %v", msgID, err)
-		}
-		if err := json.Unmarshal([]byte(ccJSON), &cc); err != nil {
-			log.Printf("WARN: corrupt cc_json for message %s: %v", msgID, err)
-		}
-		if err := json.Unmarshal([]byte(bccJSON), &bcc); err != nil {
-			log.Printf("WARN: corrupt bcc_json for message %s: %v", msgID, err)
-		}
-		parsed, _ := time.Parse(time.RFC3339Nano, createdAt)
-		out = append(out, core.Message{
-			ID:          msgID,
-			ThreadID:    thID,
-			Project:     proj,
-			From:        fromAgent,
-			To:          to,
-			CC:          cc,
-			BCC:         bcc,
-			Subject:     subject,
-			Topic:       topic,
-			Body:        body,
-			Importance:  importance,
-			AckRequired: ackRequired == 1,
-			CreatedAt:   parsed,
-			Cursor:      uint64(cur),
-		})
+	msgs, err := collectMessages(rows)
+	if err != nil {
+		return nil, fmt.Errorf("thread: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows: %w", err)
-	}
-	return out, nil
+	return msgs, nil
 }
 
 func (s *Store) ListThreads(_ context.Context, project, agent string, cursor uint64, limit int) ([]storage.ThreadSummary, error) {
@@ -506,45 +486,11 @@ func (s *Store) TopicMessages(_ context.Context, project, topic string, cursor u
 		return nil, fmt.Errorf("query topic messages: %w", err)
 	}
 	defer rows.Close()
-
-	var out []core.Message
-	for rows.Next() {
-		var (
-			rowid                                                                                  int64
-			proj                                                                                   string
-			msgID, threadID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance, msgTop string
-			ackRequired                                                                            int
-			createdAt                                                                              string
-		)
-		if err := rows.Scan(&rowid, &proj, &msgID, &threadID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &msgTop, &createdAt); err != nil {
-			return nil, fmt.Errorf("scan topic message: %w", err)
-		}
-		var to, cc, bcc []string
-		_ = json.Unmarshal([]byte(toJSON), &to)
-		_ = json.Unmarshal([]byte(ccJSON), &cc)
-		_ = json.Unmarshal([]byte(bccJSON), &bcc)
-		parsed, _ := time.Parse(time.RFC3339Nano, createdAt)
-		out = append(out, core.Message{
-			ID:          msgID,
-			ThreadID:    threadID,
-			Project:     proj,
-			From:        fromAgent,
-			To:          to,
-			CC:          cc,
-			BCC:         bcc,
-			Subject:     subject,
-			Topic:       msgTop,
-			Body:        body,
-			Importance:  importance,
-			AckRequired: ackRequired == 1,
-			CreatedAt:   parsed,
-			Cursor:      uint64(rowid),
-		})
+	msgs, err := collectMessages(rows)
+	if err != nil {
+		return nil, fmt.Errorf("topic: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows: %w", err)
-	}
-	return out, nil
+	return msgs, nil
 }
 
 func migrateMessages(db *sql.DB) error {
