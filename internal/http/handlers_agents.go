@@ -46,14 +46,10 @@ type agentJSON struct {
 }
 
 func (s *Service) handleAgents(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.handleListAgents(w, r)
-	case http.MethodPost:
-		s.handleRegisterAgent(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:  s.handleListAgents,
+		post: s.handleRegisterAgent,
+	})
 }
 
 func (s *Service) handleListAgents(w http.ResponseWriter, r *http.Request) {
@@ -261,38 +257,36 @@ type getPolicyResponse struct {
 }
 
 func (s *Service) handleAgentPolicy(w http.ResponseWriter, r *http.Request, agentID string) {
-	switch r.Method {
-	case http.MethodGet:
-		policy, err := s.store.GetContactPolicy(r.Context(), agentID)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(getPolicyResponse{AgentID: agentID, Policy: string(policy)})
-
-	case http.MethodPost:
-		var req setPolicyRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		if !core.ValidContactPolicy(req.Policy) {
+	dispatchByMethod(w, r, methodHandlers{
+		get: func(w http.ResponseWriter, r *http.Request) {
+			policy, err := s.store.GetContactPolicy(r.Context(), agentID)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]string{
-				"error": "invalid policy: must be open, auto, contacts_only, or block_all",
-			})
-			return
-		}
-		if err := s.store.SetContactPolicy(r.Context(), agentID, core.ContactPolicy(req.Policy)); err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(getPolicyResponse{AgentID: agentID, Policy: req.Policy})
-
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+			_ = json.NewEncoder(w).Encode(getPolicyResponse{AgentID: agentID, Policy: string(policy)})
+		},
+		post: func(w http.ResponseWriter, r *http.Request) {
+			var req setPolicyRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if !core.ValidContactPolicy(req.Policy) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"error": "invalid policy: must be open, auto, contacts_only, or block_all",
+				})
+				return
+			}
+			if err := s.store.SetContactPolicy(r.Context(), agentID, core.ContactPolicy(req.Policy)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(getPolicyResponse{AgentID: agentID, Policy: req.Policy})
+		},
+	})
 }

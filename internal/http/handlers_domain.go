@@ -32,14 +32,10 @@ func (s *DomainService) WithBroadcaster(b Broadcaster) *DomainService {
 // Spec handlers
 
 func (s *DomainService) handleSpecs(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.listSpecs(w, r)
-	case http.MethodPost:
-		s.createSpec(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:  s.listSpecs,
+		post: s.createSpec,
+	})
 }
 
 func (s *DomainService) handleSpecByID(w http.ResponseWriter, r *http.Request) {
@@ -50,16 +46,11 @@ func (s *DomainService) handleSpecByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
-		s.getSpec(w, r, id)
-	case http.MethodPut:
-		s.updateSpec(w, r, id)
-	case http.MethodDelete:
-		s.deleteSpec(w, r, id)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:    func(w http.ResponseWriter, r *http.Request) { s.getSpec(w, r, id) },
+		put:    func(w http.ResponseWriter, r *http.Request) { s.updateSpec(w, r, id) },
+		delete: func(w http.ResponseWriter, r *http.Request) { s.deleteSpec(w, r, id) },
+	})
 }
 
 func (s *DomainService) createSpec(w http.ResponseWriter, r *http.Request) {
@@ -161,14 +152,10 @@ func (s *DomainService) deleteSpec(w http.ResponseWriter, r *http.Request, id st
 // Epic handlers
 
 func (s *DomainService) handleEpics(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.listEpics(w, r)
-	case http.MethodPost:
-		s.createEpic(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:  s.listEpics,
+		post: s.createEpic,
+	})
 }
 
 func (s *DomainService) handleEpicByID(w http.ResponseWriter, r *http.Request) {
@@ -179,16 +166,11 @@ func (s *DomainService) handleEpicByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
-		s.getEpic(w, r, id)
-	case http.MethodPut:
-		s.updateEpic(w, r, id)
-	case http.MethodDelete:
-		s.deleteEpic(w, r, id)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:    func(w http.ResponseWriter, r *http.Request) { s.getEpic(w, r, id) },
+		put:    func(w http.ResponseWriter, r *http.Request) { s.updateEpic(w, r, id) },
+		delete: func(w http.ResponseWriter, r *http.Request) { s.deleteEpic(w, r, id) },
+	})
 }
 
 func (s *DomainService) createEpic(w http.ResponseWriter, r *http.Request) {
@@ -289,14 +271,10 @@ func (s *DomainService) deleteEpic(w http.ResponseWriter, r *http.Request, id st
 // Story handlers
 
 func (s *DomainService) handleStories(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.listStories(w, r)
-	case http.MethodPost:
-		s.createStory(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:  s.listStories,
+		post: s.createStory,
+	})
 }
 
 func (s *DomainService) handleStoryByID(w http.ResponseWriter, r *http.Request) {
@@ -307,16 +285,11 @@ func (s *DomainService) handleStoryByID(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
-		s.getStory(w, r, id)
-	case http.MethodPut:
-		s.updateStory(w, r, id)
-	case http.MethodDelete:
-		s.deleteStory(w, r, id)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:    func(w http.ResponseWriter, r *http.Request) { s.getStory(w, r, id) },
+		put:    func(w http.ResponseWriter, r *http.Request) { s.updateStory(w, r, id) },
+		delete: func(w http.ResponseWriter, r *http.Request) { s.deleteStory(w, r, id) },
+	})
 }
 
 func (s *DomainService) createStory(w http.ResponseWriter, r *http.Request) {
@@ -417,14 +390,10 @@ func (s *DomainService) deleteStory(w http.ResponseWriter, r *http.Request, id s
 // Task handlers
 
 func (s *DomainService) handleTasks(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.listTasks(w, r)
-	case http.MethodPost:
-		s.createTask(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:  s.listTasks,
+		post: s.createTask,
+	})
 }
 
 func (s *DomainService) handleTaskByID(w http.ResponseWriter, r *http.Request) {
@@ -441,16 +410,11 @@ func (s *DomainService) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
-		s.getTask(w, r, id)
-	case http.MethodPut:
-		s.updateTask(w, r, id)
-	case http.MethodDelete:
-		s.deleteTask(w, r, id)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:    func(w http.ResponseWriter, r *http.Request) { s.getTask(w, r, id) },
+		put:    func(w http.ResponseWriter, r *http.Request) { s.updateTask(w, r, id) },
+		delete: func(w http.ResponseWriter, r *http.Request) { s.deleteTask(w, r, id) },
+	})
 }
 
 func (s *DomainService) createTask(w http.ResponseWriter, r *http.Request) {
@@ -592,14 +556,10 @@ func (s *DomainService) deleteTask(w http.ResponseWriter, r *http.Request, id st
 // Insight handlers
 
 func (s *DomainService) handleInsights(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.listInsights(w, r)
-	case http.MethodPost:
-		s.createInsight(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:  s.listInsights,
+		post: s.createInsight,
+	})
 }
 
 func (s *DomainService) handleInsightByID(w http.ResponseWriter, r *http.Request) {
@@ -616,14 +576,10 @@ func (s *DomainService) handleInsightByID(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
-		s.getInsight(w, r, id)
-	case http.MethodDelete:
-		s.deleteInsight(w, r, id)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:    func(w http.ResponseWriter, r *http.Request) { s.getInsight(w, r, id) },
+		delete: func(w http.ResponseWriter, r *http.Request) { s.deleteInsight(w, r, id) },
+	})
 }
 
 func (s *DomainService) createInsight(w http.ResponseWriter, r *http.Request) {
@@ -724,14 +680,10 @@ func (s *DomainService) deleteInsight(w http.ResponseWriter, r *http.Request, id
 // Session handlers
 
 func (s *DomainService) handleSessions(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.listSessions(w, r)
-	case http.MethodPost:
-		s.createSession(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:  s.listSessions,
+		post: s.createSession,
+	})
 }
 
 func (s *DomainService) handleSessionByID(w http.ResponseWriter, r *http.Request) {
@@ -742,16 +694,11 @@ func (s *DomainService) handleSessionByID(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	switch r.Method {
-	case http.MethodGet:
-		s.getSession(w, r, id)
-	case http.MethodPut:
-		s.updateSession(w, r, id)
-	case http.MethodDelete:
-		s.deleteSession(w, r, id)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:    func(w http.ResponseWriter, r *http.Request) { s.getSession(w, r, id) },
+		put:    func(w http.ResponseWriter, r *http.Request) { s.updateSession(w, r, id) },
+		delete: func(w http.ResponseWriter, r *http.Request) { s.deleteSession(w, r, id) },
+	})
 }
 
 func (s *DomainService) createSession(w http.ResponseWriter, r *http.Request) {
@@ -861,14 +808,10 @@ func (s *DomainService) broadcastDomainEvent(project string, eventType core.Even
 // CUJ (Critical User Journey) handlers
 
 func (s *DomainService) handleCUJs(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.listCUJs(w, r)
-	case http.MethodPost:
-		s.createCUJ(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:  s.listCUJs,
+		post: s.createCUJ,
+	})
 }
 
 func (s *DomainService) handleCUJByID(w http.ResponseWriter, r *http.Request) {
@@ -895,16 +838,11 @@ func (s *DomainService) handleCUJByID(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	switch r.Method {
-	case http.MethodGet:
-		s.getCUJ(w, r, id)
-	case http.MethodPut:
-		s.updateCUJ(w, r, id)
-	case http.MethodDelete:
-		s.deleteCUJ(w, r, id)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:    func(w http.ResponseWriter, r *http.Request) { s.getCUJ(w, r, id) },
+		put:    func(w http.ResponseWriter, r *http.Request) { s.updateCUJ(w, r, id) },
+		delete: func(w http.ResponseWriter, r *http.Request) { s.deleteCUJ(w, r, id) },
+	})
 }
 
 func (s *DomainService) createCUJ(w http.ResponseWriter, r *http.Request) {

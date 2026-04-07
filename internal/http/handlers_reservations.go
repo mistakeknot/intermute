@@ -69,14 +69,10 @@ type ReservationStore interface {
 }
 
 func (s *Service) handleReservations(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		s.listReservations(w, r)
-	case http.MethodPost:
-		s.createReservation(w, r)
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:  s.listReservations,
+		post: s.createReservation,
+	})
 }
 
 func (s *Service) handleReservationByID(w http.ResponseWriter, r *http.Request) {

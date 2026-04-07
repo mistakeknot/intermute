@@ -50,14 +50,10 @@ func toWindowResponse(wi core.WindowIdentity) windowResponse {
 
 // handleWindows handles POST /api/windows (upsert) and GET /api/windows?project=X (list).
 func (s *Service) handleWindows(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		s.upsertWindow(w, r)
-	case http.MethodGet:
-		s.listWindows(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+	dispatchByMethod(w, r, methodHandlers{
+		get:  s.listWindows,
+		post: s.upsertWindow,
+	})
 }
 
 // handleWindowByID handles DELETE /api/windows/{window_uuid}?project=X (expire).
