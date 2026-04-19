@@ -30,19 +30,3 @@ L1 (core) multi-agent coordination and messaging service for the Demarch platfor
 | CLI Reference | [agents/cli-reference.md](agents/cli-reference.md) | Commands, server flags, auth model (keys YAML), client environment variables |
 | Operations | [agents/operations.md](agents/operations.md) | Gotchas (10 items), downstream dependencies, testing, router variants, SQLite gotchas |
 
-## Philosophy Alignment Protocol
-Review [`PHILOSOPHY.md`](../../PHILOSOPHY.md) during:
-- Intake/scoping
-- Brainstorming
-- Planning
-- Execution kickoff
-- Review/gates
-- Handoff/retrospective
-
-For brainstorming/planning outputs, add two short lines:
-- **Alignment:** one sentence on how the proposal supports the module's purpose within Demarch's philosophy.
-- **Conflict/Risk:** one sentence on any tension with philosophy (or 'none').
-
-If a high-value change conflicts with philosophy, either:
-- adjust the plan to align, or
-- create follow-up work to update `PHILOSOPHY.md` explicitly.
