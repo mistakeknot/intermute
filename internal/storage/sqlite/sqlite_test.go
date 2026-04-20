@@ -11,6 +11,144 @@ import (
 	"github.com/mistakeknot/intermute/internal/core"
 )
 
+func TestWindowIdentityTmuxTarget(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+	agent, err := st.RegisterAgent(ctx, core.Agent{
+		Name:    "agent-1",
+		Project: "p1",
+		Status:  "active",
+	})
+	if err != nil {
+		t.Fatalf("register agent: %v", err)
+	}
+
+	wi := core.WindowIdentity{
+		Project:     "p1",
+		WindowUUID:  "win-abc",
+		AgentID:     agent.ID,
+		DisplayName: "session-a",
+		TmuxTarget:  "sylveste:0.0",
+	}
+	got, err := st.UpsertWindowIdentityWithToken(ctx, wi, agent.Token)
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if got.TmuxTarget != "sylveste:0.0" {
+		t.Fatalf("tmux target not persisted on upsert: got %q", got.TmuxTarget)
+	}
+
+	found, err := st.LookupWindowIdentity(ctx, "p1", "win-abc")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if found == nil {
+		t.Fatal("lookup returned nil window identity")
+	}
+	if found.TmuxTarget != "sylveste:0.0" {
+		t.Fatalf("lookup lost tmux target: got %q", found.TmuxTarget)
+	}
+
+	listed, err := st.ListWindowIdentities(ctx, "p1")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("expected 1 window identity, got %d", len(listed))
+	}
+	if listed[0].TmuxTarget != "sylveste:0.0" {
+		t.Fatalf("list lost tmux target: got %q", listed[0].TmuxTarget)
+	}
+}
+
+func TestMigrateWindowTmuxTarget(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-window-identities.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`CREATE TABLE window_identities (
+		id TEXT PRIMARY KEY,
+		project TEXT NOT NULL,
+		window_uuid TEXT NOT NULL,
+		agent_id TEXT NOT NULL,
+		display_name TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		last_active_at TEXT NOT NULL,
+		expires_at TEXT,
+		UNIQUE(project, window_uuid)
+	)`)
+	if err != nil {
+		t.Fatalf("create legacy window_identities: %v", err)
+	}
+
+	if err := applySchema(db); err != nil {
+		t.Fatalf("applySchema: %v", err)
+	}
+	if !tableHasColumn(db, "window_identities", "tmux_target") {
+		t.Fatal("expected migrateWindowTmuxTarget to add tmux_target column")
+	}
+
+	st := &Store{db: &queryLogger{inner: db}}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err = db.Exec(`INSERT INTO agents (id, session_id, name, project, token, capabilities_json, metadata_json, status, contact_policy, focus_state, focus_state_updated, live_contact_policy, created_at, last_seen)
+		VALUES (?, '', ?, ?, ?, '[]', '{}', 'active', 'open', 'unknown', '', 'contacts_only', ?, ?)`,
+		"agent-legacy", "legacy-session", "p1", "legacy-token", now, now)
+	if err != nil {
+		t.Fatalf("seed legacy agent: %v", err)
+	}
+	got, err := st.UpsertWindowIdentity(context.Background(), core.WindowIdentity{
+		Project:     "p1",
+		WindowUUID:  "win-legacy",
+		AgentID:     "agent-legacy",
+		DisplayName: "legacy-session",
+		TmuxTarget:  "legacy:2.1",
+	})
+	if err != nil {
+		t.Fatalf("upsert after migration: %v", err)
+	}
+	if got.TmuxTarget != "legacy:2.1" {
+		t.Fatalf("tmux target not persisted after migration: got %q", got.TmuxTarget)
+	}
+}
+
+func TestUpsertWindowIdentityWithTokenRejectsMismatchedAgent(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+	agentA, err := st.RegisterAgent(ctx, core.Agent{
+		Name:    "agent-a",
+		Project: "p1",
+		Status:  "active",
+	})
+	if err != nil {
+		t.Fatalf("register agent-a: %v", err)
+	}
+	agentB, err := st.RegisterAgent(ctx, core.Agent{
+		Name:    "agent-b",
+		Project: "p1",
+		Status:  "active",
+	})
+	if err != nil {
+		t.Fatalf("register agent-b: %v", err)
+	}
+
+	_, err = st.UpsertWindowIdentityWithToken(ctx, core.WindowIdentity{
+		Project:     "p1",
+		WindowUUID:  "win-mismatch",
+		AgentID:     agentA.ID,
+		DisplayName: "session-a",
+		TmuxTarget:  "sylveste:1.0",
+	}, agentB.Token)
+	if err == nil {
+		t.Fatal("expected token mismatch error")
+	}
+	if err.Error() != "agent_token_mismatch" {
+		t.Fatalf("expected agent_token_mismatch, got %v", err)
+	}
+}
+
 func TestSQLiteInboxSinceCursor(t *testing.T) {
 	ctx := context.Background()
 	st := NewSQLiteTest(t)
@@ -757,7 +895,7 @@ func TestInboxStaleAcks(t *testing.T) {
 	// Create an old message (2 hours ago) with ack_required
 	oldTime := time.Now().UTC().Add(-2 * time.Hour)
 	_, _ = st.AppendEvent(ctx, core.Event{
-		Type: core.EventMessageCreated,
+		Type:  core.EventMessageCreated,
 		Agent: "bob",
 		Message: core.Message{
 			ID:          "m-stale",
@@ -774,7 +912,7 @@ func TestInboxStaleAcks(t *testing.T) {
 	// Create a recent message (1 minute ago) with ack_required — should NOT be stale at 30min TTL
 	recentTime := time.Now().UTC().Add(-1 * time.Minute)
 	_, _ = st.AppendEvent(ctx, core.Event{
-		Type: core.EventMessageCreated,
+		Type:  core.EventMessageCreated,
 		Agent: "bob",
 		Message: core.Message{
 			ID:          "m-recent",
@@ -789,7 +927,7 @@ func TestInboxStaleAcks(t *testing.T) {
 
 	// Create an old message WITHOUT ack_required — should not appear
 	_, _ = st.AppendEvent(ctx, core.Event{
-		Type: core.EventMessageCreated,
+		Type:  core.EventMessageCreated,
 		Agent: "bob",
 		Message: core.Message{
 			ID:        "m-noack",
@@ -829,7 +967,7 @@ func TestInboxStaleAcks_AckedMessageExcluded(t *testing.T) {
 
 	oldTime := time.Now().UTC().Add(-2 * time.Hour)
 	_, _ = st.AppendEvent(ctx, core.Event{
-		Type: core.EventMessageCreated,
+		Type:  core.EventMessageCreated,
 		Agent: "bob",
 		Message: core.Message{
 			ID:          "m-acked",
@@ -863,7 +1001,7 @@ func TestInboxStaleAcks_ProjectIsolation(t *testing.T) {
 
 	oldTime := time.Now().UTC().Add(-2 * time.Hour)
 	_, _ = st.AppendEvent(ctx, core.Event{
-		Type: core.EventMessageCreated,
+		Type:  core.EventMessageCreated,
 		Agent: "bob",
 		Message: core.Message{
 			ID:          "m-proj-a",
@@ -876,7 +1014,7 @@ func TestInboxStaleAcks_ProjectIsolation(t *testing.T) {
 		},
 	})
 	_, _ = st.AppendEvent(ctx, core.Event{
-		Type: core.EventMessageCreated,
+		Type:  core.EventMessageCreated,
 		Agent: "bob",
 		Message: core.Message{
 			ID:          "m-proj-b",
@@ -909,7 +1047,7 @@ func TestInboxStaleAcks_Limit(t *testing.T) {
 	oldTime := time.Now().UTC().Add(-2 * time.Hour)
 	for i := 0; i < 5; i++ {
 		_, _ = st.AppendEvent(ctx, core.Event{
-			Type: core.EventMessageCreated,
+			Type:  core.EventMessageCreated,
 			Agent: "bob",
 			Message: core.Message{
 				ID:          fmt.Sprintf("m-lim-%d", i),
@@ -938,7 +1076,7 @@ func TestInboxStaleAcks_ReadAtTracked(t *testing.T) {
 
 	oldTime := time.Now().UTC().Add(-2 * time.Hour)
 	_, _ = st.AppendEvent(ctx, core.Event{
-		Type: core.EventMessageCreated,
+		Type:  core.EventMessageCreated,
 		Agent: "bob",
 		Message: core.Message{
 			ID:          "m-read",
@@ -965,5 +1103,314 @@ func TestInboxStaleAcks_ReadAtTracked(t *testing.T) {
 	}
 	if stale[0].ReadAt == nil {
 		t.Fatal("expected ReadAt to be set for read message")
+	}
+}
+
+func TestAgentFocusStateAndLiveContactPolicyRoundtrip(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	agent, err := st.RegisterAgent(ctx, core.Agent{
+		Name:      "agent-a",
+		Project:   "proj",
+		Status:    "running",
+		CreatedAt: time.Now().UTC(),
+		LastSeen:  time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgent: %v", err)
+	}
+
+	if policy, err := st.GetLiveContactPolicy(ctx, agent.ID); err != nil {
+		t.Fatalf("GetLiveContactPolicy: %v", err)
+	} else if policy != core.PolicyContactsOnly {
+		t.Fatalf("default live policy = %q, want %q", policy, core.PolicyContactsOnly)
+	}
+
+	if err := st.SetAgentFocusState(ctx, agent.ID, core.FocusStateAtPrompt); err != nil {
+		t.Fatalf("SetAgentFocusState: %v", err)
+	}
+	state, updatedAt, err := st.GetAgentFocusState(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgentFocusState: %v", err)
+	}
+	if state != core.FocusStateAtPrompt {
+		t.Fatalf("focus state = %q, want %q", state, core.FocusStateAtPrompt)
+	}
+	if updatedAt.IsZero() {
+		t.Fatal("focus state updated time should be set")
+	}
+
+	if err := st.SetLiveContactPolicy(ctx, agent.ID, core.PolicyBlockAll); err != nil {
+		t.Fatalf("SetLiveContactPolicy: %v", err)
+	}
+	if policy, err := st.GetLiveContactPolicy(ctx, agent.ID); err != nil {
+		t.Fatalf("GetLiveContactPolicy after set: %v", err)
+	} else if policy != core.PolicyBlockAll {
+		t.Fatalf("live policy after set = %q, want %q", policy, core.PolicyBlockAll)
+	}
+
+	agents, err := st.ListAgents(ctx, "proj", nil)
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	if len(agents) != 1 {
+		t.Fatalf("expected 1 agent, got %d", len(agents))
+	}
+	if agents[0].FocusState != core.FocusStateAtPrompt {
+		t.Fatalf("ListAgents focus state = %q, want %q", agents[0].FocusState, core.FocusStateAtPrompt)
+	}
+	if agents[0].LiveContactPolicy != core.PolicyBlockAll {
+		t.Fatalf("ListAgents live policy = %q, want %q", agents[0].LiveContactPolicy, core.PolicyBlockAll)
+	}
+}
+
+func TestGetAgentFocusStateReturnsUnknownWhenStale(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	agent, err := st.RegisterAgent(ctx, core.Agent{
+		Name:      "agent-stale",
+		Project:   "proj",
+		Status:    "running",
+		CreatedAt: time.Now().UTC(),
+		LastSeen:  time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgent: %v", err)
+	}
+
+	staleAt := time.Now().UTC().Add(-StalenessFocusThreshold - time.Second)
+	if _, err := st.db.Exec(
+		`UPDATE agents SET focus_state=?, focus_state_updated=? WHERE id=?`,
+		core.FocusStateToolUse,
+		staleAt.Format(time.RFC3339Nano),
+		agent.ID,
+	); err != nil {
+		t.Fatalf("force stale focus state: %v", err)
+	}
+
+	state, updatedAt, err := st.GetAgentFocusState(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgentFocusState: %v", err)
+	}
+	if state != core.FocusStateUnknown {
+		t.Fatalf("stale focus state = %q, want %q", state, core.FocusStateUnknown)
+	}
+	if !updatedAt.Equal(staleAt) {
+		t.Fatalf("updatedAt = %v, want %v", updatedAt, staleAt)
+	}
+}
+
+func TestPendingPokesAtomicStaging(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	msg := core.Message{
+		ID:        "m-pending",
+		Project:   "p1",
+		From:      "alice",
+		To:        []string{"bob"},
+		Body:      "please rebase",
+		Transport: core.TransportBoth,
+		CreatedAt: time.Now().UTC(),
+	}
+	events := []core.Event{
+		{
+			Type:    core.EventMessageCreated,
+			Project: "p1",
+			Message: msg,
+		},
+		{
+			Type:    core.EventPeerWindowPoke,
+			Project: "p1",
+			Message: core.Message{
+				ID:        msg.ID,
+				Project:   msg.Project,
+				From:      msg.From,
+				To:        msg.To,
+				Body:      msg.Body,
+				CreatedAt: msg.CreatedAt,
+				Metadata: map[string]string{
+					"poke_result": core.PokeResultDeferred,
+					"poke_reason": "recipient_busy",
+				},
+			},
+		},
+	}
+
+	cursors, err := st.AppendEvents(ctx, events...)
+	if err != nil {
+		t.Fatalf("AppendEvents: %v", err)
+	}
+	if len(cursors) != 2 {
+		t.Fatalf("expected 2 cursors, got %d", len(cursors))
+	}
+
+	inbox, err := st.InboxSince(ctx, "p1", "bob", 0, 10)
+	if err != nil {
+		t.Fatalf("InboxSince: %v", err)
+	}
+	if len(inbox) != 1 || inbox[0].ID != msg.ID {
+		t.Fatalf("durable message missing from inbox: %+v", inbox)
+	}
+
+	pending, err := st.ListPendingPokes(ctx, "p1", "bob")
+	if err != nil {
+		t.Fatalf("ListPendingPokes: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending poke, got %d", len(pending))
+	}
+	if pending[0].MessageID != msg.ID {
+		t.Fatalf("pending message_id = %q, want %q", pending[0].MessageID, msg.ID)
+	}
+
+	if err := st.MarkPokeSurfaced(ctx, "p1", "bob", msg.ID); err != nil {
+		t.Fatalf("MarkPokeSurfaced: %v", err)
+	}
+	pending, err = st.ListPendingPokes(ctx, "p1", "bob")
+	if err != nil {
+		t.Fatalf("ListPendingPokes after mark: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("expected 0 pending after mark, got %d", len(pending))
+	}
+
+	_, err = st.AppendEvent(ctx, core.Event{
+		Type:    core.EventPeerWindowPoke,
+		Project: "p1",
+		Message: core.Message{
+			ID:        msg.ID,
+			Project:   msg.Project,
+			From:      msg.From,
+			To:        msg.To,
+			Body:      msg.Body,
+			CreatedAt: time.Now().UTC(),
+			Metadata: map[string]string{
+				"poke_result": core.PokeResultDeferred,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("AppendEvent retry: %v", err)
+	}
+	pending, err = st.ListPendingPokes(ctx, "p1", "bob")
+	if err != nil {
+		t.Fatalf("ListPendingPokes after retry: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("retry should not resurrect surfaced poke, got %d pending", len(pending))
+	}
+}
+
+func TestPokeResultInjectedDoesNotStage(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	msg := core.Message{
+		ID:        "m-injected",
+		Project:   "p1",
+		From:      "alice",
+		To:        []string{"bob"},
+		Body:      "live hello",
+		Transport: core.TransportBoth,
+		CreatedAt: time.Now().UTC(),
+	}
+	_, err := st.AppendEvents(ctx,
+		core.Event{Type: core.EventMessageCreated, Project: "p1", Message: msg},
+		core.Event{
+			Type:    core.EventPeerWindowPoke,
+			Project: "p1",
+			Message: core.Message{
+				ID:        msg.ID,
+				Project:   msg.Project,
+				From:      msg.From,
+				To:        msg.To,
+				Body:      msg.Body,
+				CreatedAt: msg.CreatedAt,
+				Metadata: map[string]string{
+					"poke_result": core.PokeResultInjected,
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("AppendEvents: %v", err)
+	}
+
+	pending, err := st.ListPendingPokes(ctx, "p1", "bob")
+	if err != nil {
+		t.Fatalf("ListPendingPokes: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("injected pokes must not stage, got %d", len(pending))
+	}
+
+	var injectedAt sql.NullString
+	if err := st.db.QueryRow(
+		`SELECT injected_at FROM message_recipients WHERE project = ? AND message_id = ? AND agent_id = ?`,
+		"p1", msg.ID, "bob",
+	).Scan(&injectedAt); err != nil {
+		t.Fatalf("query injected_at: %v", err)
+	}
+	if !injectedAt.Valid || injectedAt.String == "" {
+		t.Fatal("expected injected_at to be recorded")
+	}
+}
+
+func TestLiveTransportFeatureFlag(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	ok, err := st.LiveTransportEnabled(ctx)
+	if err != nil {
+		t.Fatalf("LiveTransportEnabled default: %v", err)
+	}
+	if !ok {
+		t.Fatal("default feature flag should be enabled")
+	}
+
+	if err := st.SetLiveTransportEnabled(ctx, false); err != nil {
+		t.Fatalf("SetLiveTransportEnabled(false): %v", err)
+	}
+	ok, err = st.LiveTransportEnabled(ctx)
+	if err != nil {
+		t.Fatalf("LiveTransportEnabled after disable: %v", err)
+	}
+	if ok {
+		t.Fatal("feature flag should be disabled")
+	}
+}
+
+func TestMessageTransportRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	st := NewSQLiteTest(t)
+
+	_, err := st.AppendEvent(ctx, core.Event{
+		Type:    core.EventMessageCreated,
+		Project: "proj",
+		Message: core.Message{
+			ID:        "m-transport",
+			Project:   "proj",
+			From:      "alice",
+			To:        []string{"bob"},
+			Body:      "transport check",
+			Transport: core.TransportBoth,
+		},
+	})
+	if err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
+	msgs, err := st.InboxSince(ctx, "proj", "bob", 0, 10)
+	if err != nil {
+		t.Fatalf("InboxSince: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+	if msgs[0].Transport != core.TransportBoth {
+		t.Fatalf("transport = %q, want %q", msgs[0].Transport, core.TransportBoth)
 	}
 }

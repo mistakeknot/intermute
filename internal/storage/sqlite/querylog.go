@@ -13,8 +13,11 @@ const slowQueryThreshold = 100 * time.Millisecond
 // All Store methods use this instead of *sql.DB directly.
 type dbHandle interface {
 	Exec(query string, args ...any) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 	Begin() (*sql.Tx, error)
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
 	Close() error
@@ -43,11 +46,38 @@ func (q *queryLogger) Query(query string, args ...any) (*sql.Rows, error) {
 	return rows, err
 }
 
+func (q *queryLogger) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	start := time.Now()
+	result, err := q.inner.ExecContext(ctx, query, args...)
+	if d := time.Since(start); d >= slowQueryThreshold {
+		log.Printf("SLOW QUERY (%s): %s", d.Round(time.Millisecond), truncateQuery(query))
+	}
+	return result, err
+}
+
+func (q *queryLogger) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	start := time.Now()
+	rows, err := q.inner.QueryContext(ctx, query, args...)
+	if d := time.Since(start); d >= slowQueryThreshold {
+		log.Printf("SLOW QUERY (%s): %s", d.Round(time.Millisecond), truncateQuery(query))
+	}
+	return rows, err
+}
+
 func (q *queryLogger) QueryRow(query string, args ...any) *sql.Row {
 	start := time.Now()
 	row := q.inner.QueryRow(query, args...)
 	d := time.Since(start)
 	if d >= slowQueryThreshold {
+		log.Printf("SLOW QUERY (%s): %s", d.Round(time.Millisecond), truncateQuery(query))
+	}
+	return row
+}
+
+func (q *queryLogger) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	start := time.Now()
+	row := q.inner.QueryRowContext(ctx, query, args...)
+	if d := time.Since(start); d >= slowQueryThreshold {
 		log.Printf("SLOW QUERY (%s): %s", d.Round(time.Millisecond), truncateQuery(query))
 	}
 	return row

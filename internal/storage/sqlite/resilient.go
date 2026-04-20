@@ -51,6 +51,18 @@ func (r *ResilientStore) AppendEvent(ctx context.Context, ev storage.Event) (uin
 	return result, err
 }
 
+func (r *ResilientStore) AppendEvents(ctx context.Context, evs ...storage.Event) ([]uint64, error) {
+	var result []uint64
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.AppendEvents(ctx, evs...)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
 func (r *ResilientStore) InboxSince(ctx context.Context, project, agent string, cursor uint64, limit int) ([]core.Message, error) {
 	var result []core.Message
 	err := r.cb.Execute(func() error {
@@ -261,6 +273,109 @@ func (r *ResilientStore) GetContactPolicy(ctx context.Context, agentID string) (
 		return RetryOnDBLock(func() error {
 			var innerErr error
 			result, innerErr = r.inner.GetContactPolicy(ctx, agentID)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+func (r *ResilientStore) SetAgentFocusState(ctx context.Context, agentID, state string) error {
+	return r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			return r.inner.SetAgentFocusState(ctx, agentID, state)
+		})
+	})
+}
+
+func (r *ResilientStore) GetAgentFocusState(ctx context.Context, agentID string) (string, time.Time, error) {
+	var (
+		state     string
+		updatedAt time.Time
+	)
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			state, updatedAt, innerErr = r.inner.GetAgentFocusState(ctx, agentID)
+			return innerErr
+		})
+	})
+	return state, updatedAt, err
+}
+
+func (r *ResilientStore) GetLiveContactPolicy(ctx context.Context, agentID string) (core.ContactPolicy, error) {
+	var result core.ContactPolicy
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.GetLiveContactPolicy(ctx, agentID)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+func (r *ResilientStore) SetLiveContactPolicy(ctx context.Context, agentID string, policy core.ContactPolicy) error {
+	return r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			return r.inner.SetLiveContactPolicy(ctx, agentID, policy)
+		})
+	})
+}
+
+func (r *ResilientStore) ListPendingPokes(ctx context.Context, project, recipient string) ([]storage.PendingPoke, error) {
+	var result []storage.PendingPoke
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.ListPendingPokes(ctx, project, recipient)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+func (r *ResilientStore) MarkPokeSurfaced(ctx context.Context, project, recipient, messageID string) error {
+	return r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			return r.inner.MarkPokeSurfaced(ctx, project, recipient, messageID)
+		})
+	})
+}
+
+func (r *ResilientStore) MarkMessageInjected(ctx context.Context, project, messageID, recipient string) error {
+	return r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			return r.inner.MarkMessageInjected(ctx, project, messageID, recipient)
+		})
+	})
+}
+
+func (r *ResilientStore) LiveTransportEnabled(ctx context.Context) (bool, error) {
+	var result bool
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.LiveTransportEnabled(ctx)
+			return innerErr
+		})
+	})
+	return result, err
+}
+
+func (r *ResilientStore) SetLiveTransportEnabled(ctx context.Context, enabled bool) error {
+	return r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			return r.inner.SetLiveTransportEnabled(ctx, enabled)
+		})
+	})
+}
+
+func (r *ResilientStore) UpsertWindowIdentityWithToken(ctx context.Context, wi core.WindowIdentity, token string) (*core.WindowIdentity, error) {
+	var result *core.WindowIdentity
+	err := r.cb.Execute(func() error {
+		return RetryOnDBLock(func() error {
+			var innerErr error
+			result, innerErr = r.inner.UpsertWindowIdentityWithToken(ctx, wi, token)
 			return innerErr
 		})
 	})

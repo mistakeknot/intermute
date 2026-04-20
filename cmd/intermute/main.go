@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,6 +19,7 @@ import (
 	"github.com/mistakeknot/intermute/internal/auth"
 	"github.com/mistakeknot/intermute/internal/cli"
 	httpapi "github.com/mistakeknot/intermute/internal/http"
+	"github.com/mistakeknot/intermute/internal/livetransport"
 	"github.com/mistakeknot/intermute/internal/server"
 	"github.com/mistakeknot/intermute/internal/storage/sqlite"
 	"github.com/mistakeknot/intermute/internal/ws"
@@ -28,6 +33,7 @@ func main() {
 
 	root.AddCommand(serveCmd())
 	root.AddCommand(initCmd())
+	root.AddCommand(inboxCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -101,7 +107,9 @@ func serveCmd() *cobra.Command {
 			sweeper := sqlite.NewSweeper(store, hub, 60*time.Second, 5*time.Minute)
 			sweeper.Start(context.Background())
 
-			svc := httpapi.NewDomainService(resilient).WithBroadcaster(hub)
+			svc := httpapi.NewDomainService(resilient).
+				WithBroadcaster(hub).
+				WithLiveDelivery(livetransport.NewInjector(nil))
 			router := httpapi.NewDomainRouter(svc, hub.Handler(), auth.Middleware(keyring, store.AgentForToken))
 
 			addr := fmt.Sprintf("%s:%d", host, port)
@@ -201,6 +209,83 @@ by default.`,
 	cmd.Flags().StringVar(&project, "project", "", "Project name (required)")
 	cmd.Flags().StringVar(&keysFile, "keys-file", "", "Path to keys file (default: intermute.keys.yaml)")
 	_ = cmd.MarkFlagRequired("project")
+
+	return cmd
+}
+
+func inboxCmd() *cobra.Command {
+	var (
+		baseURL      string
+		project      string
+		agent        string
+		unreadPokes  bool
+		markSurfaced bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "inbox",
+		Short: "Read and acknowledge pending intermute inbox pokes",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !unreadPokes {
+				return fmt.Errorf("only --unread-pokes is currently supported")
+			}
+			if strings.TrimSpace(project) == "" || strings.TrimSpace(agent) == "" {
+				return fmt.Errorf("--project and --agent are required")
+			}
+
+			q := url.Values{}
+			q.Set("project", project)
+			q.Set("agent", agent)
+			resp, err := http.Get(strings.TrimRight(baseURL, "/") + "/api/inbox/pokes?" + q.Encode())
+			if err != nil {
+				return fmt.Errorf("list inbox pokes: %w", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				return fmt.Errorf("list inbox pokes: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			}
+
+			var pokes httpapi.InboxPokesResponse
+			if err := json.NewDecoder(resp.Body).Decode(&pokes); err != nil {
+				return fmt.Errorf("decode inbox pokes: %w", err)
+			}
+
+			for i, poke := range pokes.Pokes {
+				if i > 0 {
+					fmt.Println("---")
+				}
+				fmt.Println(poke.Body)
+
+				if !markSurfaced {
+					continue
+				}
+
+				ackURL := strings.TrimRight(baseURL, "/") + "/api/inbox/pokes/" + url.PathEscape(poke.MessageID) + "/ack?" + q.Encode()
+				req, err := http.NewRequest(http.MethodPost, ackURL, nil)
+				if err != nil {
+					return fmt.Errorf("build ack request: %w", err)
+				}
+				ackResp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					return fmt.Errorf("ack inbox poke %s: %w", poke.MessageID, err)
+				}
+				io.Copy(io.Discard, ackResp.Body)
+				ackResp.Body.Close()
+				if ackResp.StatusCode != http.StatusOK {
+					return fmt.Errorf("ack inbox poke %s: status %d", poke.MessageID, ackResp.StatusCode)
+				}
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&unreadPokes, "unread-pokes", false, "Print unread deferred pokes for an agent")
+	cmd.Flags().BoolVar(&markSurfaced, "mark-surfaced", false, "Mark each printed poke as surfaced")
+	cmd.Flags().StringVar(&agent, "agent", "", "Agent ID to read pokes for")
+	cmd.Flags().StringVar(&project, "project", "", "Project name")
+	cmd.Flags().StringVar(&baseURL, "url", "http://127.0.0.1:7338", "Intermute base URL")
 
 	return cmd
 }

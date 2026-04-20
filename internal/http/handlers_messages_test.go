@@ -2,12 +2,17 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
+	"github.com/mistakeknot/intermute/internal/core"
+	"github.com/mistakeknot/intermute/internal/livetransport"
 	"github.com/mistakeknot/intermute/internal/storage/sqlite"
 )
 
@@ -281,5 +286,249 @@ func TestStaleAcksEndpoint_EmptyResult(t *testing.T) {
 	}
 	if len(result.Messages) != 0 {
 		t.Fatalf("expected empty messages, got %d", len(result.Messages))
+	}
+}
+
+type fakeLiveDelivery struct {
+	mu    sync.Mutex
+	calls []livetransport.Target
+	fail  bool
+}
+
+func (f *fakeLiveDelivery) Deliver(target *livetransport.Target, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if target != nil {
+		f.calls = append(f.calls, *target)
+	}
+	if f.fail {
+		return fmt.Errorf("inject failed")
+	}
+	return nil
+}
+
+func (f *fakeLiveDelivery) ValidateTarget(_ *livetransport.Target) error {
+	return nil
+}
+
+func newTransportTestService(t *testing.T) (*Service, *fakeLiveDelivery) {
+	t.Helper()
+	st, err := sqlite.NewInMemory()
+	if err != nil {
+		t.Fatalf("sqlite: %v", err)
+	}
+	fake := &fakeLiveDelivery{}
+	return NewService(st).WithLiveDelivery(fake), fake
+}
+
+func registerTransportAgent(t *testing.T, svc *Service, project, agentID string) {
+	t.Helper()
+	_, err := svc.store.RegisterAgent(context.Background(), core.Agent{
+		ID:      agentID,
+		Name:    agentID,
+		Project: project,
+		Token:   agentID + "-token",
+	})
+	if err != nil {
+		t.Fatalf("RegisterAgent(%s): %v", agentID, err)
+	}
+}
+
+func setTransportFocusState(t *testing.T, svc *Service, agentID, state string) {
+	t.Helper()
+	if err := svc.store.SetAgentFocusState(context.Background(), agentID, state); err != nil {
+		t.Fatalf("SetAgentFocusState(%s): %v", agentID, err)
+	}
+}
+
+func setTransportLivePolicy(t *testing.T, svc *Service, agentID string, policy core.ContactPolicy) {
+	t.Helper()
+	if err := svc.store.SetLiveContactPolicy(context.Background(), agentID, policy); err != nil {
+		t.Fatalf("SetLiveContactPolicy(%s): %v", agentID, err)
+	}
+}
+
+func setTransportWindow(t *testing.T, svc *Service, project, agentID, windowUUID, tmuxTarget string) {
+	t.Helper()
+	_, err := svc.store.UpsertWindowIdentity(context.Background(), core.WindowIdentity{
+		Project:     project,
+		WindowUUID:  windowUUID,
+		AgentID:     agentID,
+		DisplayName: agentID,
+		TmuxTarget:  tmuxTarget,
+	})
+	if err != nil {
+		t.Fatalf("UpsertWindowIdentity(%s): %v", agentID, err)
+	}
+}
+
+func sendTransportRequest(t *testing.T, svc *Service, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/messages", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	svc.handleSendMessage(rr, req)
+	return rr
+}
+
+func TestSendTransportLiveRecipientBusy(t *testing.T) {
+	svc, fake := newTransportTestService(t)
+	registerTransportAgent(t, svc, "p1", "bob")
+	setTransportLivePolicy(t, svc, "bob", core.PolicyOpen)
+	setTransportFocusState(t, svc, "bob", core.FocusStateToolUse)
+
+	rr := sendTransportRequest(t, svc, `{"project":"p1","from":"alice","to":["bob"],"body":"rebase please","transport":"live"}`)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "recipient_busy") {
+		t.Fatalf("want recipient_busy body, got %s", rr.Body.String())
+	}
+	if len(fake.calls) != 0 {
+		t.Fatalf("expected no live delivery calls, got %d", len(fake.calls))
+	}
+}
+
+func TestSendTransportBothInjectsAndPersists(t *testing.T) {
+	svc, fake := newTransportTestService(t)
+	registerTransportAgent(t, svc, "p1", "bob")
+	setTransportLivePolicy(t, svc, "bob", core.PolicyOpen)
+	setTransportFocusState(t, svc, "bob", core.FocusStateAtPrompt)
+	setTransportWindow(t, svc, "p1", "bob", "w-bob", "sylveste:0.0")
+
+	rr := sendTransportRequest(t, svc, `{"project":"p1","from":"alice","to":["bob"],"body":"rebase please","transport":"both"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"delivery":"injected"`) {
+		t.Fatalf("want injected delivery, got %s", rr.Body.String())
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected 1 live delivery call, got %d", len(fake.calls))
+	}
+
+	msgs, err := svc.store.InboxSince(context.Background(), "p1", "bob", 0, 10)
+	if err != nil {
+		t.Fatalf("InboxSince: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 inbox message, got %d", len(msgs))
+	}
+	if msgs[0].Transport != core.TransportBoth {
+		t.Fatalf("expected transport=both, got %q", msgs[0].Transport)
+	}
+
+	pending, err := svc.store.ListPendingPokes(context.Background(), "p1", "bob")
+	if err != nil {
+		t.Fatalf("ListPendingPokes: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("expected no pending pokes after inject, got %d", len(pending))
+	}
+}
+
+func TestSendTransportBothBusyDefersAtomically(t *testing.T) {
+	svc, fake := newTransportTestService(t)
+	registerTransportAgent(t, svc, "p1", "bob")
+	setTransportLivePolicy(t, svc, "bob", core.PolicyOpen)
+	setTransportFocusState(t, svc, "bob", core.FocusStateThinking)
+
+	rr := sendTransportRequest(t, svc, `{"project":"p1","from":"alice","to":["bob"],"body":"rebase please","transport":"both"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"delivery":"deferred"`) {
+		t.Fatalf("want deferred delivery, got %s", rr.Body.String())
+	}
+	if len(fake.calls) != 0 {
+		t.Fatalf("expected no live delivery calls, got %d", len(fake.calls))
+	}
+
+	msgs, err := svc.store.InboxSince(context.Background(), "p1", "bob", 0, 10)
+	if err != nil {
+		t.Fatalf("InboxSince: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 inbox message, got %d", len(msgs))
+	}
+
+	pending, err := svc.store.ListPendingPokes(context.Background(), "p1", "bob")
+	if err != nil {
+		t.Fatalf("ListPendingPokes: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending poke, got %d", len(pending))
+	}
+	if pending[0].MessageID != msgs[0].ID {
+		t.Fatalf("pending poke message mismatch: got %s want %s", pending[0].MessageID, msgs[0].ID)
+	}
+}
+
+func TestSendTransportLivePolicyDenied(t *testing.T) {
+	svc, fake := newTransportTestService(t)
+	registerTransportAgent(t, svc, "p1", "bob")
+	setTransportLivePolicy(t, svc, "bob", core.PolicyBlockAll)
+	setTransportFocusState(t, svc, "bob", core.FocusStateAtPrompt)
+	setTransportWindow(t, svc, "p1", "bob", "w-bob", "sylveste:0.0")
+
+	rr := sendTransportRequest(t, svc, `{"project":"p1","from":"alice","to":["bob"],"body":"x","transport":"live"}`)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("want 403, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if len(fake.calls) != 0 {
+		t.Fatalf("expected no live delivery calls, got %d", len(fake.calls))
+	}
+}
+
+func TestSendTransportLiveInjectFailureDoesNotDefer(t *testing.T) {
+	svc, fake := newTransportTestService(t)
+	fake.fail = true
+	registerTransportAgent(t, svc, "p1", "bob")
+	setTransportLivePolicy(t, svc, "bob", core.PolicyOpen)
+	setTransportFocusState(t, svc, "bob", core.FocusStateAtPrompt)
+	setTransportWindow(t, svc, "p1", "bob", "w-bob", "sylveste:0.0")
+
+	rr := sendTransportRequest(t, svc, `{"project":"p1","from":"alice","to":["bob"],"body":"x","transport":"live"}`)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	msgs, err := svc.store.InboxSince(context.Background(), "p1", "bob", 0, 10)
+	if err != nil {
+		t.Fatalf("InboxSince: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected no durable inbox message for live-only failure, got %d", len(msgs))
+	}
+
+	pending, err := svc.store.ListPendingPokes(context.Background(), "p1", "bob")
+	if err != nil {
+		t.Fatalf("ListPendingPokes: %v", err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("expected no deferred pending poke for live-only failure, got %d", len(pending))
+	}
+}
+
+func TestSendTransportLiveRateLimit(t *testing.T) {
+	svc, _ := newTransportTestService(t)
+	registerTransportAgent(t, svc, "p1", "bob")
+	setTransportLivePolicy(t, svc, "bob", core.PolicyOpen)
+	setTransportFocusState(t, svc, "bob", core.FocusStateAtPrompt)
+	setTransportWindow(t, svc, "p1", "bob", "w-bob", "sylveste:0.0")
+
+	body := `{"project":"p1","from":"alice","to":["bob"],"body":"x","transport":"live"}`
+	for i := 0; i < liveRateLimit; i++ {
+		rr := sendTransportRequest(t, svc, body)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("request %d want 200, got %d: %s", i, rr.Code, rr.Body.String())
+		}
+	}
+
+	rr := sendTransportRequest(t, svc, body)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("want 429, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "retry_after_seconds") {
+		t.Fatalf("expected retry_after_seconds body, got %s", rr.Body.String())
 	}
 }

@@ -33,6 +33,7 @@ type Message struct {
 	Metadata    map[string]string
 	Attachments []Attachment
 	Importance  string
+	Transport   TransportMode
 	AckRequired bool
 	Status      string
 	CreatedAt   time.Time
@@ -50,17 +51,20 @@ type Event struct {
 }
 
 type Agent struct {
-	ID            string
-	SessionID     string
-	Name          string
-	Project       string
-	Token         string // Registration-time token for identity verification
-	Capabilities  []string
-	Metadata      map[string]string
-	Status        string
-	ContactPolicy ContactPolicy
-	LastSeen      time.Time
-	CreatedAt     time.Time
+	ID                string
+	SessionID         string
+	Name              string
+	Project           string
+	Token             string // Registration-time token for identity verification
+	Capabilities      []string
+	Metadata          map[string]string
+	Status            string
+	ContactPolicy     ContactPolicy
+	FocusState        string
+	LiveContactPolicy ContactPolicy
+	FocusStateUpdated time.Time
+	LastSeen          time.Time
+	CreatedAt         time.Time
 }
 
 // RecipientStatus tracks read/ack status for a message recipient
@@ -94,6 +98,7 @@ type WindowIdentity struct {
 	WindowUUID   string
 	AgentID      string
 	DisplayName  string
+	TmuxTarget   string
 	CreatedAt    time.Time
 	LastActiveAt time.Time
 	ExpiresAt    *time.Time

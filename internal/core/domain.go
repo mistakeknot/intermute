@@ -40,8 +40,54 @@ func ValidContactPolicy(s string) bool {
 	return false
 }
 
+// TransportMode selects the delivery path for a Message.
+type TransportMode string
+
+const (
+	TransportAsync TransportMode = "async"
+	TransportLive  TransportMode = "live"
+	TransportBoth  TransportMode = "both"
+)
+
+// ValidTransport returns true if mode is a recognized transport, with empty meaning default async.
+func ValidTransport(mode TransportMode) bool {
+	switch mode {
+	case "", TransportAsync, TransportLive, TransportBoth:
+		return true
+	}
+	return false
+}
+
+// TransportOrDefault normalizes empty transport to the async default.
+func TransportOrDefault(mode TransportMode) TransportMode {
+	if mode == "" {
+		return TransportAsync
+	}
+	return mode
+}
+
+const (
+	FocusStateAtPrompt = "at-prompt"
+	FocusStateToolUse  = "tool-use"
+	FocusStateThinking = "thinking"
+	FocusStateUnknown  = "unknown"
+)
+
+// ValidFocusState returns true if s is a recognized focus state, with empty
+// meaning "use the storage default".
+func ValidFocusState(s string) bool {
+	switch s {
+	case "", FocusStateAtPrompt, FocusStateToolUse, FocusStateThinking, FocusStateUnknown:
+		return true
+	}
+	return false
+}
+
 // Domain event types for Autarch domain entities
 const (
+	// Peer live-transport audit events
+	EventPeerWindowPoke EventType = "peer.window_poke"
+
 	// Spec events
 	EventSpecCreated  EventType = "spec.created"
 	EventSpecUpdated  EventType = "spec.updated"
@@ -70,6 +116,12 @@ const (
 
 	// Reservation events
 	EventReservationExpired EventType = "reservation.expired"
+)
+
+const (
+	PokeResultInjected = "injected"
+	PokeResultDeferred = "deferred"
+	PokeResultFailed   = "failed"
 )
 
 // SpecStatus represents the status of a specification

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -185,6 +186,27 @@ func (s *Service) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request, a
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	limitBody(w, r)
+
+	var req struct {
+		FocusState string `json:"focus_state"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	if !core.ValidFocusState(req.FocusState) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid focus_state"})
+		return
+	}
+	if req.FocusState != "" {
+		if err := s.store.SetAgentFocusState(r.Context(), agentID, req.FocusState); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	}
 
 	// Enforce project scoping for API key auth
 	var project string
@@ -248,15 +270,78 @@ func (s *Service) handleAgentMetadata(w http.ResponseWriter, r *http.Request, ag
 }
 
 type setPolicyRequest struct {
-	Policy string `json:"policy"`
+	Policy            string `json:"policy"`
+	LiveContactPolicy string `json:"live_contact_policy"`
 }
 
 type getPolicyResponse struct {
-	AgentID string `json:"agent_id"`
-	Policy  string `json:"policy"`
+	AgentID           string `json:"agent_id"`
+	Policy            string `json:"policy"`
+	LiveContactPolicy string `json:"live_contact_policy"`
 }
 
 func (s *Service) handleAgentPolicy(w http.ResponseWriter, r *http.Request, agentID string) {
+	setPolicy := func(w http.ResponseWriter, r *http.Request) {
+		limitBody(w, r)
+		var req setPolicyRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if req.Policy == "" && req.LiveContactPolicy == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "policy or live_contact_policy required",
+			})
+			return
+		}
+		if req.Policy != "" && !core.ValidContactPolicy(req.Policy) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "invalid policy: must be open, auto, contacts_only, or block_all",
+			})
+			return
+		}
+		if req.LiveContactPolicy != "" && !core.ValidContactPolicy(req.LiveContactPolicy) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": "invalid live_contact_policy: must be open, auto, contacts_only, or block_all",
+			})
+			return
+		}
+		if req.Policy != "" {
+			if err := s.store.SetContactPolicy(r.Context(), agentID, core.ContactPolicy(req.Policy)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		}
+		if req.LiveContactPolicy != "" {
+			if err := s.store.SetLiveContactPolicy(r.Context(), agentID, core.ContactPolicy(req.LiveContactPolicy)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		}
+		policy, err := s.store.GetContactPolicy(r.Context(), agentID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		livePolicy, err := s.store.GetLiveContactPolicy(r.Context(), agentID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(getPolicyResponse{
+			AgentID:           agentID,
+			Policy:            string(policy),
+			LiveContactPolicy: string(livePolicy),
+		})
+	}
+
 	dispatchByMethod(w, r, methodHandlers{
 		get: func(w http.ResponseWriter, r *http.Request) {
 			policy, err := s.store.GetContactPolicy(r.Context(), agentID)
@@ -264,29 +349,19 @@ func (s *Service) handleAgentPolicy(w http.ResponseWriter, r *http.Request, agen
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(getPolicyResponse{AgentID: agentID, Policy: string(policy)})
-		},
-		post: func(w http.ResponseWriter, r *http.Request) {
-			var req setPolicyRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			if !core.ValidContactPolicy(req.Policy) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-				_ = json.NewEncoder(w).Encode(map[string]string{
-					"error": "invalid policy: must be open, auto, contacts_only, or block_all",
-				})
-				return
-			}
-			if err := s.store.SetContactPolicy(r.Context(), agentID, core.ContactPolicy(req.Policy)); err != nil {
+			livePolicy, err := s.store.GetLiveContactPolicy(r.Context(), agentID)
+			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(getPolicyResponse{AgentID: agentID, Policy: req.Policy})
+			_ = json.NewEncoder(w).Encode(getPolicyResponse{
+				AgentID:           agentID,
+				Policy:            string(policy),
+				LiveContactPolicy: string(livePolicy),
+			})
 		},
+		post: setPolicy,
+		put:  setPolicy,
 	})
 }

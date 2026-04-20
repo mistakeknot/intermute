@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS messages (
   importance TEXT,
   ack_required INTEGER NOT NULL DEFAULT 0,
   topic TEXT NOT NULL DEFAULT '',
+  transport TEXT NOT NULL DEFAULT 'async',
   created_at TEXT NOT NULL,
   PRIMARY KEY (project, message_id)
 );
@@ -47,10 +48,32 @@ CREATE TABLE IF NOT EXISTS message_recipients (
   kind TEXT NOT NULL DEFAULT 'to',
   read_at TEXT,
   ack_at TEXT,
+  injected_at TEXT,
   PRIMARY KEY (project, message_id, agent_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_recipients_agent ON message_recipients(project, agent_id);
+
+CREATE TABLE IF NOT EXISTS pending_pokes (
+  project TEXT NOT NULL,
+  recipient TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  sender TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  surfaced_at TEXT,
+  PRIMARY KEY (project, recipient, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_pokes_unread
+  ON pending_pokes(project, recipient, surfaced_at);
+
+CREATE TABLE IF NOT EXISTS config (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  live_transport_enabled INTEGER NOT NULL DEFAULT 1
+);
+
+INSERT OR IGNORE INTO config (id, live_transport_enabled) VALUES (1, 1);
 
 CREATE TABLE IF NOT EXISTS file_reservations (
   id TEXT PRIMARY KEY,
@@ -78,6 +101,9 @@ CREATE TABLE IF NOT EXISTS agents (
   metadata_json TEXT,
   status TEXT,
   contact_policy TEXT NOT NULL DEFAULT 'open',
+  focus_state TEXT NOT NULL DEFAULT 'unknown',
+  focus_state_updated TEXT NOT NULL DEFAULT '',
+  live_contact_policy TEXT NOT NULL DEFAULT 'contacts_only',
   created_at TEXT NOT NULL,
   last_seen TEXT NOT NULL
 );
@@ -254,6 +280,7 @@ CREATE TABLE IF NOT EXISTS window_identities (
   window_uuid TEXT NOT NULL,
   agent_id TEXT NOT NULL,
   display_name TEXT NOT NULL,
+  tmux_target TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   last_active_at TEXT NOT NULL,
   expires_at TEXT,

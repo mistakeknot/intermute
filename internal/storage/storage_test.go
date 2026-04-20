@@ -29,3 +29,25 @@ func TestInboxSinceProjectScoped(t *testing.T) {
 		t.Fatalf("expected 2 messages across projects, got %d", len(msgsAll))
 	}
 }
+
+func TestInMemorySatisfiesStoreInterface(t *testing.T) {
+	var _ Store = (*InMemory)(nil)
+
+	im := NewInMemory()
+	ctx := context.Background()
+	if err := im.SetAgentFocusState(ctx, "a", "at-prompt"); err != nil {
+		t.Errorf("SetAgentFocusState: %v", err)
+	}
+	if fs, _, err := im.GetAgentFocusState(ctx, "a"); err != nil || fs == "" {
+		t.Errorf("GetAgentFocusState: fs=%q err=%v", fs, err)
+	}
+	if pp, err := im.ListPendingPokes(ctx, "p", "a"); err != nil || pp == nil {
+		t.Errorf("ListPendingPokes: got nil slice or err=%v", err)
+	}
+	if cursors, err := im.AppendEvents(ctx); err != nil || cursors == nil {
+		t.Errorf("AppendEvents: cursors=%v err=%v", cursors, err)
+	}
+	if ok, err := im.LiveTransportEnabled(ctx); err != nil || !ok {
+		t.Errorf("LiveTransportEnabled: ok=%v err=%v", ok, err)
+	}
+}

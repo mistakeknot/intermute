@@ -20,8 +20,16 @@ type ThreadSummary struct {
 	LastAt       time.Time
 }
 
+type PendingPoke struct {
+	MessageID string
+	Sender    string
+	Body      string
+	CreatedAt time.Time
+}
+
 type Store interface {
 	AppendEvent(ctx context.Context, ev Event) (uint64, error)
+	AppendEvents(ctx context.Context, evs ...Event) ([]uint64, error)
 	InboxSince(ctx context.Context, project, agent string, cursor uint64, limit int) ([]core.Message, error)
 	ThreadMessages(ctx context.Context, project, threadID string, cursor uint64) ([]core.Message, error)
 	ListThreads(ctx context.Context, project, agent string, cursor uint64, limit int) ([]ThreadSummary, error)
@@ -61,6 +69,21 @@ type Store interface {
 	ListWindowIdentities(ctx context.Context, project string) ([]core.WindowIdentity, error)
 	ExpireWindowIdentity(ctx context.Context, project, windowUUID string) error
 	LookupWindowIdentity(ctx context.Context, project, windowUUID string) (*core.WindowIdentity, error)
+	// Agent focus + live policy
+	SetAgentFocusState(ctx context.Context, agentID, state string) error
+	GetAgentFocusState(ctx context.Context, agentID string) (state string, updatedAt time.Time, err error)
+	GetLiveContactPolicy(ctx context.Context, agentID string) (core.ContactPolicy, error)
+	SetLiveContactPolicy(ctx context.Context, agentID string, p core.ContactPolicy) error
+	// Pending pokes
+	ListPendingPokes(ctx context.Context, project, recipient string) ([]PendingPoke, error)
+	MarkPokeSurfaced(ctx context.Context, project, recipient, messageID string) error
+	// Live delivery status marker
+	MarkMessageInjected(ctx context.Context, project, messageID, recipient string) error
+	// Window ownership
+	UpsertWindowIdentityWithToken(ctx context.Context, wi core.WindowIdentity, token string) (*core.WindowIdentity, error)
+	// Feature flag
+	LiveTransportEnabled(ctx context.Context) (bool, error)
+	SetLiveTransportEnabled(ctx context.Context, enabled bool) error
 	// Agent token verification
 	AgentForToken(ctx context.Context, token string) (agentID string, err error)
 }
@@ -123,6 +146,18 @@ func (m *InMemory) AppendEvent(_ context.Context, ev Event) (uint64, error) {
 		}
 	}
 	return m.cursor, nil
+}
+
+func (m *InMemory) AppendEvents(ctx context.Context, evs ...Event) ([]uint64, error) {
+	cursors := make([]uint64, 0, len(evs))
+	for _, ev := range evs {
+		cursor, err := m.AppendEvent(ctx, ev)
+		if err != nil {
+			return nil, err
+		}
+		cursors = append(cursors, cursor)
+	}
+	return cursors, nil
 }
 
 func (m *InMemory) InboxSince(_ context.Context, project, agent string, cursor uint64, limit int) ([]core.Message, error) {
@@ -456,4 +491,66 @@ func (m *InMemory) ExpireWindowIdentity(_ context.Context, project, windowUUID s
 // LookupWindowIdentity looks up a window identity (stub for in-memory store)
 func (m *InMemory) LookupWindowIdentity(_ context.Context, project, windowUUID string) (*core.WindowIdentity, error) {
 	return nil, nil
+}
+
+// SetAgentFocusState is a no-op for the in-memory store.
+func (m *InMemory) SetAgentFocusState(_ context.Context, _ string, _ string) error {
+	return nil
+}
+
+// GetAgentFocusState returns a default "unknown" state for the in-memory store.
+func (m *InMemory) GetAgentFocusState(_ context.Context, _ string) (string, time.Time, error) {
+	return "unknown", time.Time{}, nil
+}
+
+// GetLiveContactPolicy returns the default live contact policy for the in-memory store.
+func (m *InMemory) GetLiveContactPolicy(_ context.Context, _ string) (core.ContactPolicy, error) {
+	return core.PolicyContactsOnly, nil
+}
+
+// SetLiveContactPolicy is a no-op for the in-memory store.
+func (m *InMemory) SetLiveContactPolicy(_ context.Context, _ string, _ core.ContactPolicy) error {
+	return nil
+}
+
+// ListPendingPokes returns an empty list for the in-memory store.
+func (m *InMemory) ListPendingPokes(_ context.Context, _, _ string) ([]PendingPoke, error) {
+	return []PendingPoke{}, nil
+}
+
+// MarkPokeSurfaced is a no-op for the in-memory store.
+func (m *InMemory) MarkPokeSurfaced(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+// MarkMessageInjected is a no-op for the in-memory store.
+func (m *InMemory) MarkMessageInjected(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+// UpsertWindowIdentityWithToken verifies that token is bound to the claimed
+// agent_id (matches SQLite behavior) before delegating to UpsertWindowIdentity.
+// Returns an "agent_token_mismatch" error on failure — callers map to 403.
+func (m *InMemory) UpsertWindowIdentityWithToken(ctx context.Context, wi core.WindowIdentity, token string) (*core.WindowIdentity, error) {
+	if token == "" {
+		return nil, fmt.Errorf("empty token")
+	}
+	agentID, err := m.AgentForToken(ctx, token)
+	if err != nil {
+		return nil, fmt.Errorf("agent_token_mismatch")
+	}
+	if agentID != wi.AgentID {
+		return nil, fmt.Errorf("agent_token_mismatch")
+	}
+	return m.UpsertWindowIdentity(ctx, wi)
+}
+
+// LiveTransportEnabled is always enabled in the in-memory store.
+func (m *InMemory) LiveTransportEnabled(_ context.Context) (bool, error) {
+	return true, nil
+}
+
+// SetLiveTransportEnabled is a no-op for the in-memory store.
+func (m *InMemory) SetLiveTransportEnabled(_ context.Context, _ bool) error {
+	return nil
 }

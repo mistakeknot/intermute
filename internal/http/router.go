@@ -15,6 +15,8 @@ func NewRouter(svc *Service, wsHandler http.Handler, mw func(http.Handler) http.
 	mux.Handle("/api/agents/", wrap(svc.handleAgentSubpath))
 	mux.Handle("/api/messages", wrap(svc.handleSendMessage))
 	mux.Handle("/api/messages/", wrap(svc.handleMessageAction))
+	mux.Handle("/api/inbox/pokes", wrap(svc.handleInboxPokes))
+	mux.Handle("/api/inbox/pokes/", wrap(svc.handleInboxPokeAction))
 	mux.Handle("/api/inbox/", wrap(svc.handleInbox))
 	mux.Handle("/api/threads", wrap(svc.handleListThreads))
 	mux.Handle("/api/threads/", wrap(svc.handleThreadMessages))

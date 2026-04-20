@@ -2,18 +2,24 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/mistakeknot/intermute/internal/core"
 )
 
+var tmuxTargetPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?(\.[0-9]+)?$`)
+
 type upsertWindowRequest struct {
-	Project     string `json:"project"`
-	WindowUUID  string `json:"window_uuid"`
-	AgentID     string `json:"agent_id"`
-	DisplayName string `json:"display_name"`
+	Project           string `json:"project"`
+	WindowUUID        string `json:"window_uuid"`
+	AgentID           string `json:"agent_id"`
+	DisplayName       string `json:"display_name"`
+	TmuxTarget        string `json:"tmux_target,omitempty"`
+	RegistrationToken string `json:"registration_token"`
 }
 
 type windowResponse struct {
@@ -22,6 +28,7 @@ type windowResponse struct {
 	WindowUUID   string  `json:"window_uuid"`
 	AgentID      string  `json:"agent_id"`
 	DisplayName  string  `json:"display_name"`
+	TmuxTarget   string  `json:"tmux_target,omitempty"`
 	CreatedAt    string  `json:"created_at"`
 	LastActiveAt string  `json:"last_active_at"`
 	ExpiresAt    *string `json:"expires_at,omitempty"`
@@ -38,6 +45,7 @@ func toWindowResponse(wi core.WindowIdentity) windowResponse {
 		WindowUUID:   wi.WindowUUID,
 		AgentID:      wi.AgentID,
 		DisplayName:  wi.DisplayName,
+		TmuxTarget:   wi.TmuxTarget,
 		CreatedAt:    wi.CreatedAt.Format(time.RFC3339Nano),
 		LastActiveAt: wi.LastActiveAt.Format(time.RFC3339Nano),
 	}
@@ -88,6 +96,7 @@ func (s *Service) handleWindowByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) upsertWindow(w http.ResponseWriter, r *http.Request) {
+	limitBody(w, r)
 	var req upsertWindowRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -101,6 +110,12 @@ func (s *Service) upsertWindow(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "project, window_uuid, and agent_id are required"})
 		return
 	}
+	if req.TmuxTarget != "" && !tmuxTargetPattern.MatchString(req.TmuxTarget) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid tmux_target"})
+		return
+	}
 	if req.DisplayName == "" {
 		req.DisplayName = req.AgentID
 	}
@@ -109,10 +124,16 @@ func (s *Service) upsertWindow(w http.ResponseWriter, r *http.Request) {
 		WindowUUID:  req.WindowUUID,
 		AgentID:     req.AgentID,
 		DisplayName: req.DisplayName,
+		TmuxTarget:  req.TmuxTarget,
 	}
-	result, err := s.store.UpsertWindowIdentity(r.Context(), wi)
+	result, err := s.store.UpsertWindowIdentityWithToken(r.Context(), wi, req.RegistrationToken)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
+		if errors.Is(err, core.ErrNotFound) || err.Error() == "agent_token_mismatch" {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "agent_token_mismatch"})
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return

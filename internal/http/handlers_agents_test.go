@@ -2,12 +2,15 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/mistakeknot/intermute/internal/core"
 	"github.com/mistakeknot/intermute/internal/storage"
+	"github.com/mistakeknot/intermute/internal/storage/sqlite"
 )
 
 func TestRegisterAgent(t *testing.T) {
@@ -309,5 +312,130 @@ func TestPatchAgentMetadataNotFound(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestHeartbeatAcceptsFocusState(t *testing.T) {
+	st, err := sqlite.NewInMemory()
+	if err != nil {
+		t.Fatalf("sqlite: %v", err)
+	}
+	svc := NewService(st)
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	defer srv.Close()
+
+	payload := map[string]any{"name": "agent-focus", "project": "proj-a"}
+	buf, _ := json.Marshal(payload)
+	resp, err := http.Post(srv.URL+"/api/agents", "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	var reg registerAgentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&reg); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+	resp.Body.Close()
+
+	hbBody, _ := json.Marshal(map[string]any{"focus_state": core.FocusStateAtPrompt})
+	hbResp, err := http.Post(srv.URL+"/api/agents/"+reg.AgentID+"/heartbeat", "application/json", bytes.NewReader(hbBody))
+	if err != nil {
+		t.Fatalf("heartbeat failed: %v", err)
+	}
+	defer hbResp.Body.Close()
+	if hbResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", hbResp.StatusCode)
+	}
+
+	state, _, err := st.GetAgentFocusState(context.Background(), reg.AgentID)
+	if err != nil {
+		t.Fatalf("GetAgentFocusState: %v", err)
+	}
+	if state != core.FocusStateAtPrompt {
+		t.Fatalf("focus_state = %q, want %q", state, core.FocusStateAtPrompt)
+	}
+}
+
+func TestHeartbeatRejectsInvalidFocusState(t *testing.T) {
+	st, err := sqlite.NewInMemory()
+	if err != nil {
+		t.Fatalf("sqlite: %v", err)
+	}
+	svc := NewService(st)
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	defer srv.Close()
+
+	payload := map[string]any{"name": "agent-focus", "project": "proj-a"}
+	buf, _ := json.Marshal(payload)
+	resp, err := http.Post(srv.URL+"/api/agents", "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	var reg registerAgentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&reg); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+	resp.Body.Close()
+
+	hbBody, _ := json.Marshal(map[string]any{"focus_state": "bogus"})
+	hbResp, err := http.Post(srv.URL+"/api/agents/"+reg.AgentID+"/heartbeat", "application/json", bytes.NewReader(hbBody))
+	if err != nil {
+		t.Fatalf("heartbeat failed: %v", err)
+	}
+	defer hbResp.Body.Close()
+	if hbResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", hbResp.StatusCode)
+	}
+}
+
+func TestPolicyEndpointAcceptsLiveContactPolicy(t *testing.T) {
+	st, err := sqlite.NewInMemory()
+	if err != nil {
+		t.Fatalf("sqlite: %v", err)
+	}
+	svc := NewService(st)
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	defer srv.Close()
+
+	payload := map[string]any{"name": "agent-policy", "project": "proj-a"}
+	buf, _ := json.Marshal(payload)
+	resp, err := http.Post(srv.URL+"/api/agents", "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	var reg registerAgentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&reg); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+	resp.Body.Close()
+
+	reqBody, _ := json.Marshal(map[string]any{"live_contact_policy": string(core.PolicyBlockAll)})
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/agents/"+reg.AgentID+"/policy", bytes.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	putResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("policy update failed: %v", err)
+	}
+	defer putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", putResp.StatusCode)
+	}
+
+	var result getPolicyResponse
+	if err := json.NewDecoder(putResp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode policy response: %v", err)
+	}
+	if result.LiveContactPolicy != string(core.PolicyBlockAll) {
+		t.Fatalf("response live_contact_policy = %q, want %q", result.LiveContactPolicy, core.PolicyBlockAll)
+	}
+
+	livePolicy, err := st.GetLiveContactPolicy(context.Background(), reg.AgentID)
+	if err != nil {
+		t.Fatalf("GetLiveContactPolicy: %v", err)
+	}
+	if livePolicy != core.PolicyBlockAll {
+		t.Fatalf("live_contact_policy = %q, want %q", livePolicy, core.PolicyBlockAll)
 	}
 }

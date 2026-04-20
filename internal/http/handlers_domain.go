@@ -8,6 +8,7 @@ import (
 
 	"github.com/mistakeknot/intermute/internal/auth"
 	"github.com/mistakeknot/intermute/internal/core"
+	"github.com/mistakeknot/intermute/internal/livetransport"
 	"github.com/mistakeknot/intermute/internal/storage"
 )
 
@@ -26,6 +27,11 @@ func NewDomainService(store storage.DomainStore) *DomainService {
 
 func (s *DomainService) WithBroadcaster(b Broadcaster) *DomainService {
 	s.Service.WithBroadcaster(b)
+	return s
+}
+
+func (s *DomainService) WithLiveDelivery(d livetransport.LiveDelivery) *DomainService {
+	s.Service.WithLiveDelivery(d)
 	return s
 }
 

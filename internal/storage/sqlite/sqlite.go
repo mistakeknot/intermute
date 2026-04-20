@@ -32,6 +32,10 @@ const (
 
 	// MaxReservationTTL is the maximum allowed TTL for a reservation.
 	MaxReservationTTL = 24 * time.Hour
+
+	// StalenessFocusThreshold is the maximum age for a stored focus state before
+	// it is treated as unknown by GetAgentFocusState.
+	StalenessFocusThreshold = 2 * time.Second
 )
 
 type Store struct {
@@ -94,6 +98,12 @@ func applySchema(db *sql.DB) error {
 	if err := migrateMessagesMetadata(db); err != nil {
 		return err
 	}
+	if err := migrateMessageTransport(db); err != nil {
+		return err
+	}
+	if err := migrateMessageRecipientsInjectedAt(db); err != nil {
+		return err
+	}
 	if err := migrateDomainVersions(db); err != nil {
 		return err
 	}
@@ -103,13 +113,25 @@ func applySchema(db *sql.DB) error {
 	if err := migrateContactPolicy(db); err != nil {
 		return err
 	}
+	if err := migrateAgentFocusState(db); err != nil {
+		return err
+	}
 	if err := migrateTopicColumn(db); err != nil {
 		return err
 	}
 	if err := migrateWindowIdentities(db); err != nil {
 		return err
 	}
+	if err := migrateWindowTmuxTarget(db); err != nil {
+		return err
+	}
 	if err := migrateAgentToken(db); err != nil {
+		return err
+	}
+	if err := migratePendingPokes(db); err != nil {
+		return err
+	}
+	if err := migrateConfigTable(db); err != nil {
 		return err
 	}
 	return nil
@@ -169,7 +191,65 @@ func migrateContactPolicy(db *sql.DB) error {
 	return nil
 }
 
-func (s *Store) AppendEvent(_ context.Context, ev core.Event) (uint64, error) {
+func migrateAgentFocusState(db *sql.DB) error {
+	if !tableExists(db, "agents") {
+		return nil
+	}
+	if !tableHasColumn(db, "agents", "focus_state") {
+		if _, err := db.Exec(`ALTER TABLE agents ADD COLUMN focus_state TEXT NOT NULL DEFAULT 'unknown'`); err != nil {
+			return fmt.Errorf("add focus_state: %w", err)
+		}
+	}
+	if !tableHasColumn(db, "agents", "focus_state_updated") {
+		if _, err := db.Exec(`ALTER TABLE agents ADD COLUMN focus_state_updated TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add focus_state_updated: %w", err)
+		}
+	}
+	if !tableHasColumn(db, "agents", "live_contact_policy") {
+		if _, err := db.Exec(`ALTER TABLE agents ADD COLUMN live_contact_policy TEXT NOT NULL DEFAULT 'contacts_only'`); err != nil {
+			return fmt.Errorf("add live_contact_policy: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) AppendEvent(ctx context.Context, ev core.Event) (uint64, error) {
+	cursors, err := s.AppendEvents(ctx, ev)
+	if err != nil {
+		return 0, err
+	}
+	if len(cursors) == 0 {
+		return 0, nil
+	}
+	return cursors[0], nil
+}
+
+func (s *Store) AppendEvents(ctx context.Context, evs ...core.Event) ([]uint64, error) {
+	if len(evs) == 0 {
+		return nil, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin append events: %w", err)
+	}
+	defer tx.Rollback()
+
+	cursors := make([]uint64, 0, len(evs))
+	for _, ev := range evs {
+		cursor, err := s.appendEventTx(tx, ev)
+		if err != nil {
+			return nil, err
+		}
+		cursors = append(cursors, cursor)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit append events: %w", err)
+	}
+	return cursors, nil
+}
+
+func (s *Store) appendEventTx(tx *sql.Tx, ev core.Event) (uint64, error) {
 	if ev.ID == "" {
 		ev.ID = uuid.NewString()
 	}
@@ -189,12 +269,6 @@ func (s *Store) AppendEvent(_ context.Context, ev core.Event) (uint64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("marshal recipients: %w", err)
 	}
-
-	tx, err := s.db.Begin()
-	if err != nil {
-		return 0, fmt.Errorf("begin append event: %w", err)
-	}
-	defer tx.Rollback()
 
 	res, err := tx.Exec(
 		`INSERT INTO events (id, type, agent, project, message_id, thread_id, from_agent, to_json, body, created_at)
@@ -262,8 +336,34 @@ func (s *Store) AppendEvent(_ context.Context, ev core.Event) (uint64, error) {
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit append event: %w", err)
+	if ev.Type == core.EventPeerWindowPoke {
+		result := ""
+		if ev.Message.Metadata != nil {
+			result = ev.Message.Metadata["poke_result"]
+		}
+		switch result {
+		case core.PokeResultDeferred:
+			for _, rcpt := range ev.Message.To {
+				if _, err := tx.Exec(
+					`INSERT OR IGNORE INTO pending_pokes
+					 (project, recipient, message_id, sender, body, created_at, surfaced_at)
+					 VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+					project, rcpt, ev.Message.ID, ev.Message.From, ev.Message.Body, ev.CreatedAt.Format(time.RFC3339Nano),
+				); err != nil {
+					return 0, fmt.Errorf("stage pending poke: %w", err)
+				}
+			}
+		case core.PokeResultInjected:
+			for _, rcpt := range ev.Message.To {
+				if _, err := tx.Exec(
+					`UPDATE message_recipients SET injected_at = ?
+					 WHERE project = ? AND message_id = ? AND agent_id = ?`,
+					ev.CreatedAt.Format(time.RFC3339Nano), project, ev.Message.ID, rcpt,
+				); err != nil {
+					return 0, fmt.Errorf("mark injected: %w", err)
+				}
+			}
+		}
 	}
 	return uint64(cursor), nil
 }
@@ -292,11 +392,12 @@ func (s *Store) upsertMessageTx(tx *sql.Tx, project string, msg core.Message) er
 		ackRequired = 1
 	}
 	topic := strings.ToLower(strings.TrimSpace(msg.Topic))
+	transport := string(core.TransportOrDefault(msg.Transport))
 	if _, err := tx.Exec(
-		`INSERT INTO messages (project, message_id, thread_id, from_agent, to_json, cc_json, bcc_json, subject, body, importance, ack_required, topic, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(project, message_id) DO UPDATE SET thread_id=excluded.thread_id, from_agent=excluded.from_agent, to_json=excluded.to_json, cc_json=excluded.cc_json, bcc_json=excluded.bcc_json, subject=excluded.subject, body=excluded.body, importance=excluded.importance, ack_required=excluded.ack_required, topic=excluded.topic`,
-		project, msg.ID, msg.ThreadID, msg.From, string(toJSON), string(ccJSON), string(bccJSON), msg.Subject, msg.Body, msg.Importance, ackRequired, topic, msg.CreatedAt.Format(time.RFC3339Nano),
+		`INSERT INTO messages (project, message_id, thread_id, from_agent, to_json, cc_json, bcc_json, subject, body, importance, ack_required, topic, transport, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(project, message_id) DO UPDATE SET thread_id=excluded.thread_id, from_agent=excluded.from_agent, to_json=excluded.to_json, cc_json=excluded.cc_json, bcc_json=excluded.bcc_json, subject=excluded.subject, body=excluded.body, importance=excluded.importance, ack_required=excluded.ack_required, topic=excluded.topic, transport=excluded.transport`,
+		project, msg.ID, msg.ThreadID, msg.From, string(toJSON), string(ccJSON), string(bccJSON), msg.Subject, msg.Body, msg.Importance, ackRequired, topic, transport, msg.CreatedAt.Format(time.RFC3339Nano),
 	); err != nil {
 		return fmt.Errorf("upsert message: %w", err)
 	}
@@ -304,18 +405,19 @@ func (s *Store) upsertMessageTx(tx *sql.Tx, project string, msg core.Message) er
 }
 
 // scanMessageRow scans a single row from a messages query into a core.Message.
-// The query must SELECT exactly 14 columns in this order:
+// The query must SELECT exactly 15 columns in this order:
 // cursor, project, message_id, thread_id, from_agent, to_json, cc_json, bcc_json,
-// subject, body, importance, ack_required, topic, created_at.
+// subject, body, importance, ack_required, topic, transport, created_at.
 func scanMessageRow(rows *sql.Rows) (core.Message, error) {
 	var (
 		cur                                                                                   int64
 		proj                                                                                  string
 		msgID, threadID, fromAgent, toJSON, ccJSON, bccJSON, subject, body, importance, topic string
+		transport                                                                             string
 		ackRequired                                                                           int
 		createdAt                                                                             string
 	)
-	if err := rows.Scan(&cur, &proj, &msgID, &threadID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &topic, &createdAt); err != nil {
+	if err := rows.Scan(&cur, &proj, &msgID, &threadID, &fromAgent, &toJSON, &ccJSON, &bccJSON, &subject, &body, &importance, &ackRequired, &topic, &transport, &createdAt); err != nil {
 		return core.Message{}, err
 	}
 	var to, cc, bcc []string
@@ -341,6 +443,7 @@ func scanMessageRow(rows *sql.Rows) (core.Message, error) {
 		Topic:       topic,
 		Body:        body,
 		Importance:  importance,
+		Transport:   core.TransportOrDefault(core.TransportMode(transport)),
 		AckRequired: ackRequired == 1,
 		CreatedAt:   parsed,
 		Cursor:      uint64(cur),
@@ -372,7 +475,7 @@ func (s *Store) InboxSince(_ context.Context, project, agent string, cursor uint
 	}
 	query := `SELECT i.cursor, i.project, m.message_id, m.thread_id, m.from_agent, m.to_json,
 		COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
-		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), COALESCE(m.topic, ''), m.created_at
+		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), COALESCE(m.topic, ''), COALESCE(m.transport, 'async'), m.created_at
 	 FROM inbox_index i
 	 JOIN messages m ON m.project = i.project AND m.message_id = i.message_id
 	 WHERE i.agent = ? AND i.cursor > ?`
@@ -398,7 +501,7 @@ func (s *Store) InboxSince(_ context.Context, project, agent string, cursor uint
 func (s *Store) ThreadMessages(_ context.Context, project, threadID string, cursor uint64) ([]core.Message, error) {
 	query := `SELECT MAX(i.cursor) AS cursor, m.project, m.message_id, m.thread_id, m.from_agent, m.to_json,
 		COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
-		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), COALESCE(m.topic, ''), m.created_at
+		m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), COALESCE(m.topic, ''), COALESCE(m.transport, 'async'), m.created_at
 	 FROM inbox_index i
 	 JOIN messages m ON m.project = i.project AND m.message_id = i.message_id
 	 WHERE m.project = ? AND m.thread_id = ? AND i.cursor > ?
@@ -477,7 +580,7 @@ func (s *Store) TopicMessages(_ context.Context, project, topic string, cursor u
 	rows, err := s.db.Query(
 		`SELECT m.rowid, m.project, m.message_id, m.thread_id, m.from_agent, m.to_json,
 			COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
-			m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), COALESCE(m.topic, ''), m.created_at
+			m.body, COALESCE(m.importance, ''), COALESCE(m.ack_required, 0), COALESCE(m.topic, ''), COALESCE(m.transport, 'async'), m.created_at
 		 FROM messages m
 		 WHERE m.project = ? AND m.topic = ? AND m.rowid > ?
 		 ORDER BY m.rowid ASC LIMIT ?`,
@@ -719,6 +822,15 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 		}
 		agent.Token = tok
 	}
+	if agent.FocusState == "" {
+		agent.FocusState = core.FocusStateUnknown
+	}
+	if agent.LiveContactPolicy == "" {
+		agent.LiveContactPolicy = core.PolicyContactsOnly
+	}
+	if agent.FocusStateUpdated.IsZero() {
+		agent.FocusStateUpdated = now
+	}
 
 	// Session identity reuse: if session_id is provided, check for existing agent
 	if agent.SessionID != "" {
@@ -754,9 +866,10 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 			}
 			// Reuse the existing agent: update its fields and token, keep its ID
 			if _, err := tx.Exec(
-				`UPDATE agents SET name=?, token=?, capabilities_json=?, metadata_json=?, status=?, contact_policy=?, last_seen=? WHERE id=?`,
+				`UPDATE agents SET name=?, token=?, capabilities_json=?, metadata_json=?, status=?, contact_policy=?, focus_state=?, focus_state_updated=?, live_contact_policy=?, last_seen=? WHERE id=?`,
 				agent.Name, agent.Token, string(capsJSON), string(metaJSON), agent.Status,
-				string(agent.ContactPolicy), agent.LastSeen.Format(time.RFC3339Nano), existingID,
+				string(agent.ContactPolicy), agent.FocusState, agent.FocusStateUpdated.Format(time.RFC3339Nano),
+				string(agent.LiveContactPolicy), agent.LastSeen.Format(time.RFC3339Nano), existingID,
 			); err != nil {
 				return core.Agent{}, fmt.Errorf("reuse agent: %w", err)
 			}
@@ -774,10 +887,11 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 			agent.ID = uuid.NewString()
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO agents (id, session_id, name, project, token, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO agents (id, session_id, name, project, token, capabilities_json, metadata_json, status, contact_policy, focus_state, focus_state_updated, live_contact_policy, created_at, last_seen)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			agent.ID, agent.SessionID, agent.Name, agent.Project, agent.Token, string(capsJSON), string(metaJSON), agent.Status,
-			string(agent.ContactPolicy), agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
+			string(agent.ContactPolicy), agent.FocusState, agent.FocusStateUpdated.Format(time.RFC3339Nano),
+			string(agent.LiveContactPolicy), agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
 		); err != nil {
 			return core.Agent{}, fmt.Errorf("register agent: %w", err)
 		}
@@ -795,13 +909,16 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 		agent.SessionID = uuid.NewString()
 	}
 	if _, err := s.db.Exec(
-		`INSERT INTO agents (id, session_id, name, project, token, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO agents (id, session_id, name, project, token, capabilities_json, metadata_json, status, contact_policy, focus_state, focus_state_updated, live_contact_policy, created_at, last_seen)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(id) DO UPDATE SET session_id=excluded.session_id, name=excluded.name, project=excluded.project,
 		 token=excluded.token, capabilities_json=excluded.capabilities_json, metadata_json=excluded.metadata_json, status=excluded.status,
-		 contact_policy=excluded.contact_policy, last_seen=excluded.last_seen`,
+		 contact_policy=excluded.contact_policy, focus_state=excluded.focus_state,
+		 focus_state_updated=excluded.focus_state_updated, live_contact_policy=excluded.live_contact_policy,
+		 last_seen=excluded.last_seen`,
 		agent.ID, agent.SessionID, agent.Name, agent.Project, agent.Token, string(capsJSON), string(metaJSON), agent.Status,
-		string(agent.ContactPolicy), agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
+		string(agent.ContactPolicy), agent.FocusState, agent.FocusStateUpdated.Format(time.RFC3339Nano),
+		string(agent.LiveContactPolicy), agent.CreatedAt.Format(time.RFC3339Nano), agent.LastSeen.Format(time.RFC3339Nano),
 	); err != nil {
 		return core.Agent{}, fmt.Errorf("register agent: %w", err)
 	}
@@ -828,11 +945,11 @@ func (s *Store) Heartbeat(_ context.Context, project, agentID string) (core.Agen
 		return core.Agent{}, fmt.Errorf("agent not found")
 	}
 
-	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen FROM agents WHERE id=?`, agentID)
+	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, focus_state, focus_state_updated, live_contact_policy, created_at, last_seen FROM agents WHERE id=?`, agentID)
 	var (
-		id, sessionID, name, proj, capsJSON, metaJSON, status, contactPolicy, createdAt, lastSeen string
+		id, sessionID, name, proj, capsJSON, metaJSON, status, contactPolicy, focusState, focusStateUpdated, liveContactPolicy, createdAt, lastSeen string
 	)
-	if err := row.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &contactPolicy, &createdAt, &lastSeen); err != nil {
+	if err := row.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &contactPolicy, &focusState, &focusStateUpdated, &liveContactPolicy, &createdAt, &lastSeen); err != nil {
 		return core.Agent{}, fmt.Errorf("heartbeat fetch: %w", err)
 	}
 	var caps []string
@@ -844,24 +961,28 @@ func (s *Store) Heartbeat(_ context.Context, project, agentID string) (core.Agen
 		log.Printf("WARN: corrupt metadata_json for agent %s: %v", agentID, err)
 	}
 	createdAtTime, _ := time.Parse(time.RFC3339Nano, createdAt)
+	focusStateUpdatedTime, _ := time.Parse(time.RFC3339Nano, focusStateUpdated)
 	lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
 
 	return core.Agent{
-		ID:            id,
-		SessionID:     sessionID,
-		Name:          name,
-		Project:       proj,
-		Capabilities:  caps,
-		Metadata:      meta,
-		Status:        status,
-		ContactPolicy: core.ContactPolicy(contactPolicy),
-		CreatedAt:     createdAtTime,
-		LastSeen:      lastSeenTime,
+		ID:                id,
+		SessionID:         sessionID,
+		Name:              name,
+		Project:           proj,
+		Capabilities:      caps,
+		Metadata:          meta,
+		Status:            status,
+		ContactPolicy:     core.ContactPolicy(contactPolicy),
+		FocusState:        focusState,
+		LiveContactPolicy: core.ContactPolicy(liveContactPolicy),
+		FocusStateUpdated: focusStateUpdatedTime,
+		CreatedAt:         createdAtTime,
+		LastSeen:          lastSeenTime,
 	}, nil
 }
 
 func (s *Store) ListAgents(_ context.Context, project string, capabilities []string) ([]core.Agent, error) {
-	query := `SELECT id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen
+	query := `SELECT id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, focus_state, focus_state_updated, live_contact_policy, created_at, last_seen
 		FROM agents`
 	var conditions []string
 	var args []any
@@ -895,9 +1016,9 @@ func (s *Store) ListAgents(_ context.Context, project string, capabilities []str
 	var out []core.Agent
 	for rows.Next() {
 		var (
-			id, sessionID, name, proj, capsJSON, metaJSON, status, contactPolicy, createdAt, lastSeen string
+			id, sessionID, name, proj, capsJSON, metaJSON, status, contactPolicy, focusState, focusStateUpdated, liveContactPolicy, createdAt, lastSeen string
 		)
-		if err := rows.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &contactPolicy, &createdAt, &lastSeen); err != nil {
+		if err := rows.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &contactPolicy, &focusState, &focusStateUpdated, &liveContactPolicy, &createdAt, &lastSeen); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		var caps []string
@@ -909,19 +1030,23 @@ func (s *Store) ListAgents(_ context.Context, project string, capabilities []str
 			log.Printf("WARN: corrupt metadata_json for agent %s: %v", id, err)
 		}
 		createdAtTime, _ := time.Parse(time.RFC3339Nano, createdAt)
+		focusStateUpdatedTime, _ := time.Parse(time.RFC3339Nano, focusStateUpdated)
 		lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
 
 		out = append(out, core.Agent{
-			ID:            id,
-			SessionID:     sessionID,
-			Name:          name,
-			Project:       proj,
-			Capabilities:  caps,
-			Metadata:      meta,
-			Status:        status,
-			ContactPolicy: core.ContactPolicy(contactPolicy),
-			CreatedAt:     createdAtTime,
-			LastSeen:      lastSeenTime,
+			ID:                id,
+			SessionID:         sessionID,
+			Name:              name,
+			Project:           proj,
+			Capabilities:      caps,
+			Metadata:          meta,
+			Status:            status,
+			ContactPolicy:     core.ContactPolicy(contactPolicy),
+			FocusState:        focusState,
+			LiveContactPolicy: core.ContactPolicy(liveContactPolicy),
+			FocusStateUpdated: focusStateUpdatedTime,
+			CreatedAt:         createdAtTime,
+			LastSeen:          lastSeenTime,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -971,11 +1096,11 @@ func (s *Store) UpdateAgentMetadata(_ context.Context, agentID string, meta map[
 	}
 
 	// Fetch and return updated agent
-	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, created_at, last_seen FROM agents WHERE id=?`, agentID)
+	row := s.db.QueryRow(`SELECT id, session_id, name, project, capabilities_json, metadata_json, status, contact_policy, focus_state, focus_state_updated, live_contact_policy, created_at, last_seen FROM agents WHERE id=?`, agentID)
 	var (
-		id, sessionID, name, proj, capsJSON, metaJSON, status, contactPolicy, createdAt, lastSeen string
+		id, sessionID, name, proj, capsJSON, metaJSON, status, contactPolicy, focusState, focusStateUpdated, liveContactPolicy, createdAt, lastSeen string
 	)
-	if err := row.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &contactPolicy, &createdAt, &lastSeen); err != nil {
+	if err := row.Scan(&id, &sessionID, &name, &proj, &capsJSON, &metaJSON, &status, &contactPolicy, &focusState, &focusStateUpdated, &liveContactPolicy, &createdAt, &lastSeen); err != nil {
 		return core.Agent{}, fmt.Errorf("fetch updated agent: %w", err)
 	}
 	var caps []string
@@ -987,19 +1112,23 @@ func (s *Store) UpdateAgentMetadata(_ context.Context, agentID string, meta map[
 		log.Printf("WARN: corrupt metadata_json for agent %s: %v", agentID, err)
 	}
 	createdAtTime, _ := time.Parse(time.RFC3339Nano, createdAt)
+	focusStateUpdatedTime, _ := time.Parse(time.RFC3339Nano, focusStateUpdated)
 	lastSeenTime, _ := time.Parse(time.RFC3339Nano, lastSeen)
 
 	return core.Agent{
-		ID:            id,
-		SessionID:     sessionID,
-		Name:          name,
-		Project:       proj,
-		Capabilities:  caps,
-		Metadata:      updatedMeta,
-		Status:        status,
-		ContactPolicy: core.ContactPolicy(contactPolicy),
-		CreatedAt:     createdAtTime,
-		LastSeen:      lastSeenTime,
+		ID:                id,
+		SessionID:         sessionID,
+		Name:              name,
+		Project:           proj,
+		Capabilities:      caps,
+		Metadata:          updatedMeta,
+		Status:            status,
+		ContactPolicy:     core.ContactPolicy(contactPolicy),
+		FocusState:        focusState,
+		LiveContactPolicy: core.ContactPolicy(liveContactPolicy),
+		FocusStateUpdated: focusStateUpdatedTime,
+		CreatedAt:         createdAtTime,
+		LastSeen:          lastSeenTime,
 	}, nil
 }
 
@@ -1030,6 +1159,150 @@ func (s *Store) GetContactPolicy(_ context.Context, agentID string) (core.Contac
 		return core.PolicyOpen, nil
 	}
 	return core.ContactPolicy(policy), nil
+}
+
+func (s *Store) SetAgentFocusState(_ context.Context, agentID, state string) error {
+	if state == "" {
+		state = core.FocusStateUnknown
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.Exec(`UPDATE agents SET focus_state=?, focus_state_updated=? WHERE id=?`, state, now, agentID)
+	if err != nil {
+		return fmt.Errorf("set agent focus state: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("agent not found")
+	}
+	return nil
+}
+
+func (s *Store) GetAgentFocusState(_ context.Context, agentID string) (string, time.Time, error) {
+	var state string
+	var updatedStr string
+	err := s.db.QueryRow(`SELECT focus_state, focus_state_updated FROM agents WHERE id=?`, agentID).Scan(&state, &updatedStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return core.FocusStateUnknown, time.Time{}, nil
+		}
+		return core.FocusStateUnknown, time.Time{}, fmt.Errorf("get agent focus state: %w", err)
+	}
+	if updatedStr == "" {
+		return core.FocusStateUnknown, time.Time{}, nil
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, updatedStr)
+	if err != nil {
+		return core.FocusStateUnknown, time.Time{}, nil
+	}
+	if time.Since(updatedAt) > StalenessFocusThreshold {
+		return core.FocusStateUnknown, updatedAt, nil
+	}
+	if state == "" {
+		state = core.FocusStateUnknown
+	}
+	return state, updatedAt, nil
+}
+
+func (s *Store) GetLiveContactPolicy(_ context.Context, agentID string) (core.ContactPolicy, error) {
+	var policy string
+	err := s.db.QueryRow(`SELECT live_contact_policy FROM agents WHERE id=?`, agentID).Scan(&policy)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return core.PolicyContactsOnly, nil
+		}
+		return core.PolicyContactsOnly, fmt.Errorf("get live contact policy: %w", err)
+	}
+	if policy == "" {
+		return core.PolicyContactsOnly, nil
+	}
+	return core.ContactPolicy(policy), nil
+}
+
+func (s *Store) SetLiveContactPolicy(_ context.Context, agentID string, policy core.ContactPolicy) error {
+	res, err := s.db.Exec(`UPDATE agents SET live_contact_policy=? WHERE id=?`, string(policy), agentID)
+	if err != nil {
+		return fmt.Errorf("set live contact policy: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("agent not found")
+	}
+	return nil
+}
+
+func (s *Store) ListPendingPokes(_ context.Context, project, recipient string) ([]storage.PendingPoke, error) {
+	rows, err := s.db.Query(
+		`SELECT message_id, sender, body, created_at FROM pending_pokes
+		 WHERE project = ? AND recipient = ? AND surfaced_at IS NULL
+		 ORDER BY created_at ASC`,
+		project, recipient,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pending pokes: %w", err)
+	}
+	defer rows.Close()
+
+	var out []storage.PendingPoke
+	for rows.Next() {
+		var poke storage.PendingPoke
+		var createdAt string
+		if err := rows.Scan(&poke.MessageID, &poke.Sender, &poke.Body, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan pending poke: %w", err)
+		}
+		poke.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
+		out = append(out, poke)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pending poke rows: %w", err)
+	}
+	return out, nil
+}
+
+func (s *Store) MarkPokeSurfaced(_ context.Context, project, recipient, messageID string) error {
+	_, err := s.db.Exec(
+		`UPDATE pending_pokes SET surfaced_at = ?
+		 WHERE project = ? AND recipient = ? AND message_id = ? AND surfaced_at IS NULL`,
+		time.Now().UTC().Format(time.RFC3339Nano), project, recipient, messageID,
+	)
+	if err != nil {
+		return fmt.Errorf("mark poke surfaced: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) MarkMessageInjected(_ context.Context, project, messageID, recipient string) error {
+	_, err := s.db.Exec(
+		`UPDATE message_recipients SET injected_at = ?
+		 WHERE project = ? AND message_id = ? AND agent_id = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano), project, messageID, recipient,
+	)
+	if err != nil {
+		return fmt.Errorf("mark message injected: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) LiveTransportEnabled(_ context.Context) (bool, error) {
+	var enabled int
+	err := s.db.QueryRow(`SELECT live_transport_enabled FROM config WHERE id = 1`).Scan(&enabled)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return true, nil
+		}
+		return true, fmt.Errorf("read feature flag: %w", err)
+	}
+	return enabled == 1, nil
+}
+
+func (s *Store) SetLiveTransportEnabled(_ context.Context, enabled bool) error {
+	value := 0
+	if enabled {
+		value = 1
+	}
+	if _, err := s.db.Exec(`UPDATE config SET live_transport_enabled = ? WHERE id = 1`, value); err != nil {
+		return fmt.Errorf("set feature flag: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) AddContact(_ context.Context, agentID, contactAgentID string) error {
@@ -1180,6 +1453,62 @@ func migrateMessagesMetadata(db *sql.DB) error {
 	return nil
 }
 
+func migrateMessageTransport(db *sql.DB) error {
+	if !tableExists(db, "messages") {
+		return nil
+	}
+	if !tableHasColumn(db, "messages", "transport") {
+		if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN transport TEXT NOT NULL DEFAULT 'async'`); err != nil {
+			return fmt.Errorf("add transport column: %w", err)
+		}
+	}
+	return nil
+}
+
+func migrateMessageRecipientsInjectedAt(db *sql.DB) error {
+	if !tableExists(db, "message_recipients") {
+		return nil
+	}
+	if !tableHasColumn(db, "message_recipients", "injected_at") {
+		if _, err := db.Exec(`ALTER TABLE message_recipients ADD COLUMN injected_at TEXT`); err != nil {
+			return fmt.Errorf("add injected_at column: %w", err)
+		}
+	}
+	return nil
+}
+
+func migratePendingPokes(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS pending_pokes (
+		project TEXT NOT NULL,
+		recipient TEXT NOT NULL,
+		message_id TEXT NOT NULL,
+		sender TEXT NOT NULL,
+		body TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		surfaced_at TEXT,
+		PRIMARY KEY (project, recipient, message_id)
+	)`); err != nil {
+		return fmt.Errorf("create pending_pokes: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_pending_pokes_unread ON pending_pokes(project, recipient, surfaced_at)`); err != nil {
+		return fmt.Errorf("create pending_pokes index: %w", err)
+	}
+	return nil
+}
+
+func migrateConfigTable(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS config (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		live_transport_enabled INTEGER NOT NULL DEFAULT 1
+	)`); err != nil {
+		return fmt.Errorf("create config: %w", err)
+	}
+	if _, err := db.Exec(`INSERT OR IGNORE INTO config (id, live_transport_enabled) VALUES (1, 1)`); err != nil {
+		return fmt.Errorf("seed config row: %w", err)
+	}
+	return nil
+}
+
 // insertRecipientsTx adds recipients to the message_recipients table within a transaction
 func (s *Store) insertRecipientsTx(tx *sql.Tx, project, messageID string, agents []string, kind string) error {
 	for _, agent := range agents {
@@ -1320,7 +1649,7 @@ func (s *Store) InboxStaleAcks(_ context.Context, project, agentID string, ttlSe
 	// where ack_at IS NULL and the message is older than ttlSeconds.
 	query := `SELECT m.message_id, m.thread_id, m.project, m.from_agent, m.to_json,
 		COALESCE(m.cc_json, '[]'), COALESCE(m.bcc_json, '[]'), COALESCE(m.subject, ''),
-		m.body, COALESCE(m.importance, ''), COALESCE(m.topic, ''), m.created_at,
+		m.body, COALESCE(m.importance, ''), COALESCE(m.topic, ''), COALESCE(m.transport, 'async'), m.created_at,
 		r.kind, r.read_at
 	 FROM message_recipients r
 	 JOIN messages m ON m.project = r.project AND m.message_id = r.message_id
@@ -1342,12 +1671,12 @@ func (s *Store) InboxStaleAcks(_ context.Context, project, agentID string, ttlSe
 		var (
 			msgID, threadID, proj, fromAgent                   string
 			toJSON, ccJSON, bccJSON, subject, body, importance string
-			topic, createdAtStr, kind                          string
+			topic, transport, createdAtStr, kind               string
 			readAt                                             sql.NullString
 		)
 		if err := rows.Scan(&msgID, &threadID, &proj, &fromAgent,
 			&toJSON, &ccJSON, &bccJSON, &subject,
-			&body, &importance, &topic, &createdAtStr,
+			&body, &importance, &topic, &transport, &createdAtStr,
 			&kind, &readAt); err != nil {
 			return nil, fmt.Errorf("scan stale ack: %w", err)
 		}
@@ -1370,6 +1699,7 @@ func (s *Store) InboxStaleAcks(_ context.Context, project, agentID string, ttlSe
 				Topic:       topic,
 				Body:        body,
 				Importance:  importance,
+				Transport:   core.TransportOrDefault(core.TransportMode(transport)),
 				AckRequired: true,
 				CreatedAt:   createdAt,
 			},
@@ -1793,6 +2123,7 @@ func migrateWindowIdentities(db *sql.DB) error {
 		window_uuid TEXT NOT NULL,
 		agent_id TEXT NOT NULL,
 		display_name TEXT NOT NULL,
+		tmux_target TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL,
 		last_active_at TEXT NOT NULL,
 		expires_at TEXT,
@@ -1810,10 +2141,74 @@ func migrateWindowIdentities(db *sql.DB) error {
 	return nil
 }
 
+func migrateWindowTmuxTarget(db *sql.DB) error {
+	if !tableExists(db, "window_identities") {
+		return nil
+	}
+	if !tableHasColumn(db, "window_identities", "tmux_target") {
+		if _, err := db.Exec(`ALTER TABLE window_identities ADD COLUMN tmux_target TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add tmux_target column: %w", err)
+		}
+	}
+	return nil
+}
+
 // UpsertWindowIdentity inserts or updates a window identity by (project, window_uuid).
 // On conflict, it updates agent_id, display_name, and touches last_active_at.
 // The insert and read-back are wrapped in a transaction for atomicity.
 func (s *Store) UpsertWindowIdentity(ctx context.Context, wi core.WindowIdentity) (*core.WindowIdentity, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin upsert window tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := upsertWindowIdentityTx(ctx, tx, wi)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit upsert window tx: %w", err)
+	}
+	return result, nil
+}
+
+// UpsertWindowIdentityWithToken validates the caller's registration token before
+// allowing a window identity to be created or updated for an agent.
+func (s *Store) UpsertWindowIdentityWithToken(ctx context.Context, wi core.WindowIdentity, token string) (*core.WindowIdentity, error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("agent_token_mismatch")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin upsert window tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var agentID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM agents WHERE token = ?`, token).Scan(&agentID)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("agent_token_mismatch")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lookup agent token: %w", err)
+	}
+	if agentID != wi.AgentID {
+		return nil, fmt.Errorf("agent_token_mismatch")
+	}
+
+	result, err := upsertWindowIdentityTx(ctx, tx, wi)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit upsert window tx: %w", err)
+	}
+	return result, nil
+}
+
+func upsertWindowIdentityTx(ctx context.Context, tx *sql.Tx, wi core.WindowIdentity) (*core.WindowIdentity, error) {
 	now := time.Now().UTC()
 	if wi.ID == "" {
 		wi.ID = uuid.NewString()
@@ -1828,20 +2223,15 @@ func (s *Store) UpsertWindowIdentity(ctx context.Context, wi core.WindowIdentity
 		expiresAt = sql.NullString{String: wi.ExpiresAt.Format(time.RFC3339Nano), Valid: true}
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin upsert window tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	_, err = tx.ExecContext(ctx, `INSERT INTO window_identities (id, project, window_uuid, agent_id, display_name, created_at, last_active_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := tx.ExecContext(ctx, `INSERT INTO window_identities (id, project, window_uuid, agent_id, display_name, tmux_target, created_at, last_active_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(project, window_uuid) DO UPDATE SET
 			agent_id = excluded.agent_id,
 			display_name = excluded.display_name,
+			tmux_target = excluded.tmux_target,
 			last_active_at = excluded.last_active_at,
 			expires_at = NULL`,
-		wi.ID, wi.Project, wi.WindowUUID, wi.AgentID, wi.DisplayName,
+		wi.ID, wi.Project, wi.WindowUUID, wi.AgentID, wi.DisplayName, wi.TmuxTarget,
 		wi.CreatedAt.Format(time.RFC3339Nano), wi.LastActiveAt.Format(time.RFC3339Nano),
 		expiresAt)
 	if err != nil {
@@ -1849,7 +2239,7 @@ func (s *Store) UpsertWindowIdentity(ctx context.Context, wi core.WindowIdentity
 	}
 
 	// Read back the actual row within the same transaction for atomicity.
-	row := tx.QueryRowContext(ctx, `SELECT id, project, window_uuid, agent_id, display_name, created_at, last_active_at, expires_at
+	row := tx.QueryRowContext(ctx, `SELECT id, project, window_uuid, agent_id, display_name, tmux_target, created_at, last_active_at, expires_at
 		FROM window_identities
 		WHERE project = ? AND window_uuid = ? AND (expires_at IS NULL OR expires_at > ?)`,
 		wi.Project, wi.WindowUUID, now.Format(time.RFC3339Nano))
@@ -1858,17 +2248,13 @@ func (s *Store) UpsertWindowIdentity(ctx context.Context, wi core.WindowIdentity
 	if err != nil {
 		return nil, fmt.Errorf("read-back window identity: %w", err)
 	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit upsert window tx: %w", err)
-	}
 	return result, nil
 }
 
 // ListWindowIdentities returns non-expired window identities for a project.
 func (s *Store) ListWindowIdentities(ctx context.Context, project string) ([]core.WindowIdentity, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rows, err := s.db.Query(`SELECT id, project, window_uuid, agent_id, display_name, created_at, last_active_at, expires_at
+	rows, err := s.db.Query(`SELECT id, project, window_uuid, agent_id, display_name, tmux_target, created_at, last_active_at, expires_at
 		FROM window_identities
 		WHERE project = ? AND (expires_at IS NULL OR expires_at > ?)
 		ORDER BY last_active_at DESC`, project, now)
@@ -1903,7 +2289,7 @@ func (s *Store) ExpireWindowIdentity(ctx context.Context, project, windowUUID st
 // LookupWindowIdentity finds a non-expired window identity by (project, window_uuid).
 func (s *Store) LookupWindowIdentity(ctx context.Context, project, windowUUID string) (*core.WindowIdentity, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	row := s.db.QueryRow(`SELECT id, project, window_uuid, agent_id, display_name, created_at, last_active_at, expires_at
+	row := s.db.QueryRow(`SELECT id, project, window_uuid, agent_id, display_name, tmux_target, created_at, last_active_at, expires_at
 		FROM window_identities
 		WHERE project = ? AND window_uuid = ? AND (expires_at IS NULL OR expires_at > ?)`,
 		project, windowUUID, now)
@@ -1921,30 +2307,30 @@ func (s *Store) LookupWindowIdentity(ctx context.Context, project, windowUUID st
 // scanWindowIdentity scans a WindowIdentity from a row set.
 func scanWindowIdentity(rows *sql.Rows) (*core.WindowIdentity, error) {
 	var (
-		id, project, windowUUID, agentID, displayName string
-		createdAt, lastActiveAt                       string
-		expiresAt                                     sql.NullString
+		id, project, windowUUID, agentID, displayName, tmuxTarget string
+		createdAt, lastActiveAt                                   string
+		expiresAt                                                 sql.NullString
 	)
-	if err := rows.Scan(&id, &project, &windowUUID, &agentID, &displayName, &createdAt, &lastActiveAt, &expiresAt); err != nil {
+	if err := rows.Scan(&id, &project, &windowUUID, &agentID, &displayName, &tmuxTarget, &createdAt, &lastActiveAt, &expiresAt); err != nil {
 		return nil, fmt.Errorf("scan window identity: %w", err)
 	}
-	return parseWindowIdentity(id, project, windowUUID, agentID, displayName, createdAt, lastActiveAt, expiresAt)
+	return parseWindowIdentity(id, project, windowUUID, agentID, displayName, tmuxTarget, createdAt, lastActiveAt, expiresAt)
 }
 
 // scanWindowIdentityRow scans a WindowIdentity from a single row.
 func scanWindowIdentityRow(row *sql.Row) (*core.WindowIdentity, error) {
 	var (
-		id, project, windowUUID, agentID, displayName string
-		createdAt, lastActiveAt                       string
-		expiresAt                                     sql.NullString
+		id, project, windowUUID, agentID, displayName, tmuxTarget string
+		createdAt, lastActiveAt                                   string
+		expiresAt                                                 sql.NullString
 	)
-	if err := row.Scan(&id, &project, &windowUUID, &agentID, &displayName, &createdAt, &lastActiveAt, &expiresAt); err != nil {
+	if err := row.Scan(&id, &project, &windowUUID, &agentID, &displayName, &tmuxTarget, &createdAt, &lastActiveAt, &expiresAt); err != nil {
 		return nil, err
 	}
-	return parseWindowIdentity(id, project, windowUUID, agentID, displayName, createdAt, lastActiveAt, expiresAt)
+	return parseWindowIdentity(id, project, windowUUID, agentID, displayName, tmuxTarget, createdAt, lastActiveAt, expiresAt)
 }
 
-func parseWindowIdentity(id, project, windowUUID, agentID, displayName, createdAt, lastActiveAt string, expiresAt sql.NullString) (*core.WindowIdentity, error) {
+func parseWindowIdentity(id, project, windowUUID, agentID, displayName, tmuxTarget, createdAt, lastActiveAt string, expiresAt sql.NullString) (*core.WindowIdentity, error) {
 	ca, err := time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
 		return nil, fmt.Errorf("parse window created_at %q: %w", createdAt, err)
@@ -1959,6 +2345,7 @@ func parseWindowIdentity(id, project, windowUUID, agentID, displayName, createdA
 		WindowUUID:   windowUUID,
 		AgentID:      agentID,
 		DisplayName:  displayName,
+		TmuxTarget:   tmuxTarget,
 		CreatedAt:    ca,
 		LastActiveAt: la,
 	}
