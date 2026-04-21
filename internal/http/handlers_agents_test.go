@@ -29,6 +29,35 @@ func TestRegisterAgent(t *testing.T) {
 	}
 }
 
+func TestRegisterAgentInvalidSessionIDReturns400(t *testing.T) {
+	svc := NewService(storage.NewInMemory())
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	defer srv.Close()
+
+	// A non-UUID session_id (e.g., the literal string "unknown") should produce
+	// 400 Bad Request with a structured error, not 500 Internal Server Error.
+	payload := map[string]any{"name": "agent-bad", "session_id": "not-a-uuid"}
+	buf, _ := json.Marshal(payload)
+	resp, err := http.Post(srv.URL+"/api/agents", "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if body["code"] != "invalid_session_id" {
+		t.Fatalf("expected code=invalid_session_id, got %q", body["code"])
+	}
+	if body["error"] == "" {
+		t.Fatalf("expected non-empty error message")
+	}
+}
+
 func TestListAgents(t *testing.T) {
 	svc := NewService(storage.NewInMemory())
 	srv := httptest.NewServer(NewRouter(svc, nil, nil))

@@ -11,6 +11,9 @@ var ErrConcurrentModification = errors.New("concurrent modification: entity was 
 // ErrNotFound is returned when a requested entity does not exist
 var ErrNotFound = errors.New("not found")
 
+// ErrInvalidSessionID is returned when a provided session_id is not a valid UUID.
+var ErrInvalidSessionID = errors.New("invalid session_id: must be a valid UUID")
+
 // ErrActiveSessionConflict is returned when a session_id is already in use by an active agent.
 var ErrActiveSessionConflict = errors.New("active session conflict: session_id is in use by an agent with a recent heartbeat")
 

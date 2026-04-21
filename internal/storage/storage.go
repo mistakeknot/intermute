@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mistakeknot/intermute/internal/core"
 )
 
@@ -254,6 +255,9 @@ func (m *InMemory) ListThreads(_ context.Context, project, agent string, cursor 
 func (m *InMemory) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, error) {
 	// Check for session_id reuse
 	if agent.SessionID != "" {
+		if _, err := uuid.Parse(agent.SessionID); err != nil {
+			return core.Agent{}, fmt.Errorf("%w: %q", core.ErrInvalidSessionID, agent.SessionID)
+		}
 		for _, existing := range m.agents {
 			if existing.SessionID == agent.SessionID {
 				if time.Since(existing.LastSeen) < core.SessionStaleThreshold {

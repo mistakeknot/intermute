@@ -835,7 +835,7 @@ func (s *Store) RegisterAgent(_ context.Context, agent core.Agent) (core.Agent, 
 	// Session identity reuse: if session_id is provided, check for existing agent
 	if agent.SessionID != "" {
 		if _, err := uuid.Parse(agent.SessionID); err != nil {
-			return core.Agent{}, fmt.Errorf("invalid session_id %q: must be a valid UUID", agent.SessionID)
+			return core.Agent{}, fmt.Errorf("%w: %q", core.ErrInvalidSessionID, agent.SessionID)
 		}
 
 		tx, err := s.db.BeginTx(context.Background(), nil)

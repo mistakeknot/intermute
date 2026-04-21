@@ -142,6 +142,15 @@ func (s *Service) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if errors.Is(err, core.ErrInvalidSessionID) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"error": err.Error(),
+				"code":  "invalid_session_id",
+			})
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
