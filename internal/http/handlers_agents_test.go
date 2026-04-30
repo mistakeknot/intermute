@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/mistakeknot/intermute/internal/core"
@@ -129,6 +130,318 @@ func TestListAgentsProjectFilter(t *testing.T) {
 	}
 	if result.Agents[0].Project != "proj-a" {
 		t.Fatalf("expected proj-a, got %s", result.Agents[0].Project)
+	}
+}
+
+func TestPresenceAgentsFiltersByRepoAndActiveBeadID(t *testing.T) {
+	svc := NewService(storage.NewInMemory())
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	defer srv.Close()
+
+	type presenceAgent struct {
+		AgentID      string   `json:"agent_id"`
+		Kind         string   `json:"kind"`
+		Status       string   `json:"status"`
+		LastSeen     string   `json:"last_seen"`
+		Repo         string   `json:"repo"`
+		Files        []string `json:"files"`
+		Objective    string   `json:"objective"`
+		Confidence   string   `json:"confidence"`
+		ActiveBeadID string   `json:"active_bead_id"`
+		ThreadID     string   `json:"thread_id"`
+	}
+	type presenceResponse struct {
+		Agents []presenceAgent `json:"agents"`
+	}
+
+	repo := "/home/mk/projects/Sylveste/core/intermute"
+	beadID := "sylveste-kgfi.2"
+
+	register := func(t *testing.T, payload map[string]any) string {
+		t.Helper()
+		buf, _ := json.Marshal(payload)
+		resp, err := http.Post(srv.URL+"/api/agents", "application/json", bytes.NewReader(buf))
+		if err != nil {
+			t.Fatalf("register failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("register expected 200, got %d", resp.StatusCode)
+		}
+		var out registerAgentResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode register failed: %v", err)
+		}
+		return out.AgentID
+	}
+
+	matchingID := register(t, map[string]any{
+		"name":    "claude-code",
+		"project": "sylveste",
+		"status":  "active",
+		"metadata": map[string]string{
+			"agent_kind":             "claude-code",
+			"repo":                   repo,
+			"active_bead_id":         beadID,
+			"thread_id":              beadID,
+			"active_bead_confidence": "reported",
+			"files_touched":          `["internal/http/handlers_agents.go","internal/http/handlers_agents_test.go"]`,
+			"objective":              "Add bead presence read model",
+		},
+	})
+	register(t, map[string]any{
+		"name":    "same-repo-different-bead",
+		"project": "sylveste",
+		"status":  "active",
+		"metadata": map[string]string{
+			"agent_kind":             "codex",
+			"repo":                   repo,
+			"active_bead_id":         "sylveste-kgfi.3",
+			"active_bead_confidence": "reported",
+		},
+	})
+	register(t, map[string]any{
+		"name":    "same-bead-different-repo",
+		"project": "sylveste",
+		"status":  "active",
+		"metadata": map[string]string{
+			"agent_kind":             "claude-code",
+			"repo":                   "/home/mk/projects/Sylveste/interverse/intermux",
+			"active_bead_id":         beadID,
+			"active_bead_confidence": "reported",
+		},
+	})
+	register(t, map[string]any{
+		"name":    "ambiguous-candidate-only",
+		"project": "sylveste",
+		"status":  "active",
+		"metadata": map[string]string{
+			"agent_kind":             "claude-code",
+			"repo":                   repo,
+			"active_bead_id":         "",
+			"active_bead_candidates": `["sylveste-kgfi.2","sylveste-kgfi.4"]`,
+			"active_bead_confidence": "unknown",
+		},
+	})
+
+	query := url.Values{}
+	query.Set("repo", repo)
+	query.Set("active_bead_id", beadID)
+	resp, err := http.Get(srv.URL + "/api/agents/presence?" + query.Encode())
+	if err != nil {
+		t.Fatalf("presence request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var result presenceResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if len(result.Agents) != 1 {
+		t.Fatalf("expected 1 matching presence agent, got %d: %+v", len(result.Agents), result.Agents)
+	}
+	agent := result.Agents[0]
+	if agent.AgentID != matchingID {
+		t.Fatalf("expected matching agent %s, got %s", matchingID, agent.AgentID)
+	}
+	if agent.Kind != "claude-code" || agent.Status != "active" || agent.Repo != repo {
+		t.Fatalf("unexpected compact presence fields: %+v", agent)
+	}
+	if agent.LastSeen == "" {
+		t.Fatalf("expected last_seen to be populated")
+	}
+	if agent.ActiveBeadID != beadID || agent.ThreadID != beadID || agent.Confidence != "reported" {
+		t.Fatalf("unexpected bead correlation fields: %+v", agent)
+	}
+	if agent.Objective != "Add bead presence read model" {
+		t.Fatalf("unexpected objective %q", agent.Objective)
+	}
+	if len(agent.Files) != 2 || agent.Files[0] != "internal/http/handlers_agents.go" || agent.Files[1] != "internal/http/handlers_agents_test.go" {
+		t.Fatalf("unexpected files: %#v", agent.Files)
+	}
+}
+
+func TestPresenceAgentsProjectsProducerMetadataStatus(t *testing.T) {
+	svc := NewService(storage.NewInMemory())
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	defer srv.Close()
+
+	repo := "/home/mk/projects/Sylveste/core/intermute"
+	beadID := "sylveste-kgfi.2"
+	payload := map[string]any{
+		"name":    "metadata-status-agent",
+		"project": "sylveste",
+		"metadata": map[string]string{
+			"agent_kind":     "codex",
+			"repo":           repo,
+			"active_bead_id": beadID,
+			"status":         "idle",
+		},
+	}
+	buf, _ := json.Marshal(payload)
+	resp, err := http.Post(srv.URL+"/api/agents", "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("register expected 200, got %d", resp.StatusCode)
+	}
+
+	query := url.Values{}
+	query.Set("active_bead_id", beadID)
+	presenceResp, err := http.Get(srv.URL + "/api/agents/presence?" + query.Encode())
+	if err != nil {
+		t.Fatalf("presence request failed: %v", err)
+	}
+	defer presenceResp.Body.Close()
+	if presenceResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", presenceResp.StatusCode)
+	}
+
+	var result struct {
+		Agents []struct {
+			AgentID    string `json:"agent_id"`
+			Status     string `json:"status"`
+			Repo       string `json:"repo"`
+			Confidence string `json:"confidence"`
+		} `json:"agents"`
+	}
+	if err := json.NewDecoder(presenceResp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if len(result.Agents) != 1 {
+		t.Fatalf("expected 1 matching presence agent, got %d: %+v", len(result.Agents), result.Agents)
+	}
+	if result.Agents[0].Status != "idle" {
+		t.Fatalf("expected producer metadata status idle, got %+v", result.Agents[0])
+	}
+	if result.Agents[0].Repo != repo {
+		t.Fatalf("expected repo %q, got %+v", repo, result.Agents[0])
+	}
+	if result.Agents[0].Confidence != "unknown" {
+		t.Fatalf("expected default confidence unknown, got %+v", result.Agents[0])
+	}
+}
+
+func TestPresenceAgentsUnauthenticatedProjectFilter(t *testing.T) {
+	svc := NewService(storage.NewInMemory())
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	defer srv.Close()
+
+	repo := "/home/mk/projects/Sylveste/core/intermute"
+	beadID := "sylveste-kgfi.2"
+	register := func(t *testing.T, name, project string) string {
+		t.Helper()
+		buf, _ := json.Marshal(map[string]any{
+			"name":    name,
+			"project": project,
+			"metadata": map[string]string{
+				"agent_kind":     "codex",
+				"repo":           repo,
+				"active_bead_id": beadID,
+			},
+		})
+		resp, err := http.Post(srv.URL+"/api/agents", "application/json", bytes.NewReader(buf))
+		if err != nil {
+			t.Fatalf("register failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("register expected 200, got %d", resp.StatusCode)
+		}
+		var out registerAgentResponse
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode register failed: %v", err)
+		}
+		return out.AgentID
+	}
+
+	projectAID := register(t, "project-a-agent", "sylveste")
+	register(t, "project-b-agent", "athenverse")
+
+	query := url.Values{}
+	query.Set("project", "sylveste")
+	query.Set("active_bead_id", beadID)
+	resp, err := http.Get(srv.URL + "/api/agents/presence?" + query.Encode())
+	if err != nil {
+		t.Fatalf("presence project-filter request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var result agentPresenceResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if len(result.Agents) != 1 || result.Agents[0].AgentID != projectAID {
+		t.Fatalf("expected only sylveste presence agent %s, got %+v", projectAID, result.Agents)
+	}
+}
+
+func TestPresenceAgentsNormalizesProjectedMetadata(t *testing.T) {
+	svc := NewService(storage.NewInMemory())
+	srv := httptest.NewServer(NewRouter(svc, nil, nil))
+	defer srv.Close()
+
+	repo := "/home/mk/projects/Sylveste/core/intermute"
+	beadID := "sylveste-kgfi.2"
+	payload := map[string]any{
+		"name":    "whitespace-agent",
+		"project": "sylveste",
+		"status":  " active ",
+		"metadata": map[string]string{
+			"agent_kind":             "  claude-code  ",
+			"repo":                   "  " + repo + "  ",
+			"active_bead_id":         "  " + beadID + "  ",
+			"thread_id":              "  " + beadID + "  ",
+			"active_bead_confidence": "  reported  ",
+			"files_touched":          `[" internal/http/handlers_agents.go ",""," internal/http/handlers_agents_test.go "]`,
+			"objective":              "  Add bead presence read model  ",
+			"status":                 "  stuck  ",
+		},
+	}
+	buf, _ := json.Marshal(payload)
+	resp, err := http.Post(srv.URL+"/api/agents", "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("register expected 200, got %d", resp.StatusCode)
+	}
+
+	query := url.Values{}
+	query.Set("repo", repo)
+	query.Set("active_bead_id", beadID)
+	presenceResp, err := http.Get(srv.URL + "/api/agents/presence?" + query.Encode())
+	if err != nil {
+		t.Fatalf("presence request failed: %v", err)
+	}
+	defer presenceResp.Body.Close()
+	if presenceResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", presenceResp.StatusCode)
+	}
+	var result agentPresenceResponse
+	if err := json.NewDecoder(presenceResp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if len(result.Agents) != 1 {
+		t.Fatalf("expected one normalized presence agent, got %+v", result.Agents)
+	}
+	agent := result.Agents[0]
+	if agent.Kind != "claude-code" || agent.Status != "stuck" || agent.Repo != repo {
+		t.Fatalf("expected normalized kind/status/repo, got %+v", agent)
+	}
+	if agent.Objective != "Add bead presence read model" || agent.ActiveBeadID != beadID || agent.ThreadID != beadID || agent.Confidence != "reported" {
+		t.Fatalf("expected normalized bead metadata fields, got %+v", agent)
+	}
+	if len(agent.Files) != 2 || agent.Files[0] != "internal/http/handlers_agents.go" || agent.Files[1] != "internal/http/handlers_agents_test.go" {
+		t.Fatalf("expected normalized nonblank files, got %#v", agent.Files)
 	}
 }
 

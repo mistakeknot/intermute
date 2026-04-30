@@ -46,6 +46,23 @@ type agentJSON struct {
 	CreatedAt    string            `json:"created_at"`
 }
 
+type agentPresenceResponse struct {
+	Agents []agentPresenceJSON `json:"agents"`
+}
+
+type agentPresenceJSON struct {
+	AgentID      string   `json:"agent_id"`
+	Kind         string   `json:"kind"`
+	Status       string   `json:"status"`
+	LastSeen     string   `json:"last_seen"`
+	Repo         string   `json:"repo"`
+	Files        []string `json:"files"`
+	Objective    string   `json:"objective"`
+	Confidence   string   `json:"confidence"`
+	ActiveBeadID string   `json:"active_bead_id"`
+	ThreadID     string   `json:"thread_id"`
+}
+
 func (s *Service) handleAgents(w http.ResponseWriter, r *http.Request) {
 	dispatchByMethod(w, r, methodHandlers{
 		get:  s.handleListAgents,
@@ -98,6 +115,95 @@ func (s *Service) handleListAgents(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(listAgentsResponse{Agents: out})
+}
+
+func (s *Service) handleAgentPresence(w http.ResponseWriter, r *http.Request) {
+	dispatchByMethod(w, r, methodHandlers{get: s.handleListAgentPresence})
+}
+
+func (s *Service) handleListAgentPresence(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	project := strings.TrimSpace(query.Get("project"))
+	repo := strings.TrimSpace(query.Get("repo"))
+	activeBeadID := strings.TrimSpace(query.Get("active_bead_id"))
+
+	info, _ := auth.FromContext(r.Context())
+	if info.Mode == auth.ModeAPIKey {
+		if project == "" {
+			project = info.Project
+		} else if project != info.Project {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+	}
+
+	agents, err := s.store.ListAgents(r.Context(), project, nil)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	out := make([]agentPresenceJSON, 0, len(agents))
+	for _, a := range agents {
+		meta := a.Metadata
+		if repo != "" && strings.TrimSpace(meta["repo"]) != repo {
+			continue
+		}
+		if activeBeadID != "" && strings.TrimSpace(meta["active_bead_id"]) != activeBeadID {
+			continue
+		}
+
+		out = append(out, agentPresenceJSON{
+			AgentID:      a.ID,
+			Kind:         presenceMetadataValue(meta, "agent_kind"),
+			Status:       presenceStatus(a),
+			LastSeen:     a.LastSeen.Format(time.RFC3339),
+			Repo:         presenceMetadataValue(meta, "repo"),
+			Files:        parsePresenceFiles(meta["files_touched"]),
+			Objective:    presenceMetadataValue(meta, "objective"),
+			Confidence:   presenceConfidence(a),
+			ActiveBeadID: presenceMetadataValue(meta, "active_bead_id"),
+			ThreadID:     presenceMetadataValue(meta, "thread_id"),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(agentPresenceResponse{Agents: out})
+}
+
+func presenceStatus(agent core.Agent) string {
+	if status := strings.TrimSpace(agent.Metadata["status"]); status != "" {
+		return status
+	}
+	return strings.TrimSpace(agent.Status)
+}
+
+func presenceConfidence(agent core.Agent) string {
+	if confidence := strings.TrimSpace(agent.Metadata["active_bead_confidence"]); confidence != "" {
+		return confidence
+	}
+	return "unknown"
+}
+
+func presenceMetadataValue(metadata map[string]string, key string) string {
+	return strings.TrimSpace(metadata[key])
+}
+
+func parsePresenceFiles(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return []string{}
+	}
+	var files []string
+	if err := json.Unmarshal([]byte(raw), &files); err != nil {
+		return []string{}
+	}
+	out := make([]string, 0, len(files))
+	for _, file := range files {
+		if file = strings.TrimSpace(file); file != "" {
+			out = append(out, file)
+		}
+	}
+	return out
 }
 
 func (s *Service) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {

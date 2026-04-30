@@ -51,6 +51,69 @@ func TestAPIKeyProjectEnforcement(t *testing.T) {
 	}
 }
 
+func TestPresenceAPIKeyProjectEnforcement(t *testing.T) {
+	st, err := sqlite.NewInMemory()
+	if err != nil {
+		t.Fatalf("sqlite: %v", err)
+	}
+	svc := NewService(st)
+	ring := auth.NewKeyring(true, map[string]string{"secret-a": "proj-a", "secret-b": "proj-b"})
+	h := NewRouter(svc, nil, auth.Middleware(ring))
+
+	register := func(token, name, project string) string {
+		buf, _ := json.Marshal(map[string]any{
+			"name":    name,
+			"project": project,
+			"metadata": map[string]string{
+				"agent_kind":     "codex",
+				"repo":           "/home/mk/projects/Sylveste/core/intermute",
+				"active_bead_id": "sylveste-kgfi.2",
+			},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/agents", bytes.NewReader(buf))
+		req.RemoteAddr = "203.0.113.10:9999"
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("register %s expected 200, got %d", name, rr.Code)
+		}
+		var out registerAgentResponse
+		if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
+			t.Fatalf("decode register %s failed: %v", name, err)
+		}
+		return out.AgentID
+	}
+
+	projectAID := register("secret-a", "project-a-agent", "proj-a")
+	register("secret-b", "project-b-agent", "proj-b")
+
+	defaultReq := httptest.NewRequest(http.MethodGet, "/api/agents/presence?active_bead_id=sylveste-kgfi.2", nil)
+	defaultReq.RemoteAddr = "203.0.113.10:9999"
+	defaultReq.Header.Set("Authorization", "Bearer secret-a")
+	defaultResp := httptest.NewRecorder()
+	h.ServeHTTP(defaultResp, defaultReq)
+	if defaultResp.Code != http.StatusOK {
+		t.Fatalf("presence default project expected 200, got %d", defaultResp.Code)
+	}
+	var defaultResult agentPresenceResponse
+	if err := json.NewDecoder(defaultResp.Body).Decode(&defaultResult); err != nil {
+		t.Fatalf("decode default presence failed: %v", err)
+	}
+	if len(defaultResult.Agents) != 1 || defaultResult.Agents[0].AgentID != projectAID {
+		t.Fatalf("expected API-key request to default to proj-a agent %s, got %+v", projectAID, defaultResult.Agents)
+	}
+
+	forbiddenReq := httptest.NewRequest(http.MethodGet, "/api/agents/presence?project=proj-b&active_bead_id=sylveste-kgfi.2", nil)
+	forbiddenReq.RemoteAddr = "203.0.113.10:9999"
+	forbiddenReq.Header.Set("Authorization", "Bearer secret-a")
+	forbiddenResp := httptest.NewRecorder()
+	h.ServeHTTP(forbiddenResp, forbiddenReq)
+	if forbiddenResp.Code != http.StatusForbidden {
+		t.Fatalf("presence cross-project query expected 403, got %d", forbiddenResp.Code)
+	}
+}
+
 func TestHeartbeatAuthEnforcement(t *testing.T) {
 	st, err := sqlite.NewInMemory()
 	if err != nil {

@@ -8,10 +8,51 @@
 
 - `POST /api/agents` -- Register agent (auto-generates Culture ship name if none provided)
 - `GET /api/agents?project=...&capability=...` -- List agents (filter by capability, comma-separated)
+- `GET /api/agents/presence?repo=...&active_bead_id=...` -- Compact presence read model for agents working in a repo and/or on a Beads issue
 - `POST /api/agents/{id}/heartbeat` -- Update last_seen
 - `PATCH /api/agents/{id}/metadata` -- Merge metadata keys (PATCH semantics: incoming keys overwrite, absent keys preserved)
 - `GET /api/agents/{id}/policy` -- Get contact policy
 - `POST /api/agents/{id}/policy` -- Set contact policy (open, auto, contacts_only, block_all)
+
+### Agent presence
+
+`GET /api/agents/presence` exposes a compact read path over agent metadata so operators can ask "who is working on this bead/repo?" without scraping Discord or full agent records.
+
+Query parameters:
+
+- `project` -- Optional project scope. Bearer-key requests default to the key's project and cannot query another project.
+- `repo` -- Optional exact repository path/name from metadata key `repo`.
+- `active_bead_id` -- Optional exact Beads issue ID from metadata key `active_bead_id`.
+
+Response:
+
+```json
+{
+  "agents": [
+    {
+      "agent_id": "agent-123",
+      "kind": "claude-code",
+      "status": "active",
+      "last_seen": "2026-04-29T20:58:00Z",
+      "repo": "/home/mk/projects/Sylveste/core/intermute",
+      "files": ["internal/http/handlers_agents.go"],
+      "objective": "Add bead presence read model",
+      "confidence": "reported",
+      "active_bead_id": "sylveste-kgfi.2",
+      "thread_id": "sylveste-kgfi.2"
+    }
+  ]
+}
+```
+
+Notes:
+
+- `kind`, `repo`, `files`, `objective`, `confidence`, `active_bead_id`, and `thread_id` are projected from agent metadata keys (`agent_kind`, `repo`, `files_touched`, `objective`, `active_bead_confidence`, `active_bead_id`, `thread_id`).
+- `confidence` follows the producer metadata vocabulary: `reported`, `observed`, or `unknown`.
+- `status` prefers producer metadata key `status` when present, then falls back to the agent record status.
+- `files_touched` is expected to be a JSON-encoded string array; invalid or blank values project as an empty `files` array.
+- Ambiguous candidate-only metadata is not guessed: an `active_bead_id` query only matches the singular `active_bead_id` metadata value, not `active_bead_candidates`.
+- `thread_id` can use the Beads issue ID as the message/thread correlation handle.
 
 ## Messaging
 
