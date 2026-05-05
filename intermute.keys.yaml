@@ -1,7 +1,0 @@
-default_policy:
-  allow_localhost_without_auth: true
-
-projects:
-  autarch:
-    keys:
-      - "replace-with-autarch-secret"

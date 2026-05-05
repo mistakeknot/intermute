@@ -1,6 +1,7 @@
 /tmp/
 *.db
 *.sqlite
+intermute.keys.yaml
 
 # Auracoil
 .auracoil/cache/

@@ -59,6 +59,27 @@ func TestRegisterAgentInvalidSessionIDReturns400(t *testing.T) {
 	}
 }
 
+func TestDomainRouterExposesAgentPresence(t *testing.T) {
+	env := newTestEnv(t)
+
+	resp := env.get(t, "/api/agents/presence")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from domain router presence endpoint, got %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Agents []any `json:"agents"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode presence response failed: %v", err)
+	}
+	if len(result.Agents) != 0 {
+		t.Fatalf("expected no agents in empty store, got %+v", result.Agents)
+	}
+}
+
 func TestListAgents(t *testing.T) {
 	svc := NewService(storage.NewInMemory())
 	srv := httptest.NewServer(NewRouter(svc, nil, nil))
