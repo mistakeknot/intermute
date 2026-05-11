@@ -13,8 +13,10 @@ func NewDomainRouter(svc *DomainService, wsHandler http.Handler, mw func(http.Ha
 		return handler
 	}
 
-	// Health check (unauthenticated)
-	mux.HandleFunc("/health", handleHealth)
+	// Health check (unauthenticated). Reports actual DB liveness when svc
+	// has a Pinger wired in; falls back to hardcoded-ok in test setups
+	// that don't bother.
+	mux.HandleFunc("/health", newHealthHandler(svc.pinger))
 
 	// File reservations
 	mux.Handle("/api/reservations", wrap(svc.handleReservations))

@@ -54,6 +54,20 @@ func New(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
+	// SQLite is single-writer; serialize through one connection. WAL keeps
+	// concurrent readers unblocked, and busy_timeout makes any contended
+	// write wait up to 5s rather than returning SQLITE_BUSY immediately —
+	// which is what previously left orphaned .db-journal files locking the
+	// DB across daemon restarts. Matches the race-test helper at race_test.go:17.
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("enable WAL: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("set busy_timeout: %w", err)
+	}
 	if err := applySchema(db); err != nil {
 		return nil, err
 	}
@@ -2087,6 +2101,18 @@ func (s *Store) SweepExpired(_ context.Context, expiredBefore time.Time, heartbe
 	defer rows.Close()
 
 	return s.scanReservations(rows)
+}
+
+// Ping verifies the DB is reachable and responsive by running a trivial
+// query. Returns an error if the DB cannot be queried within ctx's deadline.
+// Used by handleHealth so /health reflects actual DB liveness, not just
+// whether the process is alive.
+func (s *Store) Ping(ctx context.Context) error {
+	if ql, ok := s.db.(*queryLogger); ok {
+		var one int
+		return ql.inner.QueryRowContext(ctx, "SELECT 1").Scan(&one)
+	}
+	return fmt.Errorf("store backed by unexpected handle type")
 }
 
 // Close checkpoints the WAL and closes the database connection.

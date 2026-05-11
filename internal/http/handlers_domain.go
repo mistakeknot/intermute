@@ -16,6 +16,7 @@ import (
 type DomainService struct {
 	*Service
 	domainStore storage.DomainStore
+	pinger      Pinger
 }
 
 func NewDomainService(store storage.DomainStore) *DomainService {
@@ -32,6 +33,14 @@ func (s *DomainService) WithBroadcaster(b Broadcaster) *DomainService {
 
 func (s *DomainService) WithLiveDelivery(d livetransport.LiveDelivery) *DomainService {
 	s.Service.WithLiveDelivery(d)
+	return s
+}
+
+// WithPinger wires a Pinger into /health so it reports actual DB liveness
+// rather than just process liveness. Optional — if not called, /health
+// keeps its legacy hardcoded-ok behavior.
+func (s *DomainService) WithPinger(p Pinger) *DomainService {
+	s.pinger = p
 	return s
 }
 

@@ -109,7 +109,8 @@ func serveCmd() *cobra.Command {
 
 			svc := httpapi.NewDomainService(resilient).
 				WithBroadcaster(hub).
-				WithLiveDelivery(livetransport.NewInjector(nil))
+				WithLiveDelivery(livetransport.NewInjector(nil)).
+				WithPinger(store)
 			router := httpapi.NewDomainRouter(svc, hub.Handler(), auth.Middleware(keyring, store.AgentForToken))
 
 			addr := fmt.Sprintf("%s:%d", host, port)
