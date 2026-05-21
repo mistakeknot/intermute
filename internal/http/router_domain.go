@@ -14,7 +14,7 @@ func NewDomainRouter(svc *DomainService, wsHandler http.Handler, mw func(http.Ha
 	}
 
 	// Health check (unauthenticated)
-	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/health", svc.handleHealth)
 
 	// File reservations
 	mux.Handle("/api/reservations", wrap(svc.handleReservations))

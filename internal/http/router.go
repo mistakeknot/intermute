@@ -11,6 +11,7 @@ func NewRouter(svc *Service, wsHandler http.Handler, mw func(http.Handler) http.
 		}
 		return handler
 	}
+	mux.HandleFunc("/health", svc.handleHealth)
 	mux.Handle("/api/agents", wrap(svc.handleAgents))
 	mux.Handle("/api/agents/presence", wrap(svc.handleAgentPresence))
 	mux.Handle("/api/agents/", wrap(svc.handleAgentSubpath))

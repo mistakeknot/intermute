@@ -82,6 +82,17 @@ func NewInMemory() (*Store, error) {
 	return &Store{db: &queryLogger{inner: db}}, nil
 }
 
+func (s *Store) HealthCheck(ctx context.Context) error {
+	var result int
+	if err := s.db.QueryRowContext(ctx, "SELECT 1").Scan(&result); err != nil {
+		return fmt.Errorf("database health check: %w", err)
+	}
+	if result != 1 {
+		return fmt.Errorf("database health check returned %d", result)
+	}
+	return nil
+}
+
 func applySchema(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("apply schema: %w", err)
