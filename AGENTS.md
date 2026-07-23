@@ -5,6 +5,7 @@ L1 (core) multi-agent coordination and messaging service for the Demarch platfor
 ## Canonical References
 1. [`PHILOSOPHY.md`](../../PHILOSOPHY.md) -- direction for ideation and planning decisions.
 2. `CLAUDE.md` -- implementation details, architecture, testing, and release workflow.
+3. [Worktree-first coordination contract](../../docs/guide-worktree-first-coordination.md) -- canonical rules for worktrees. NOTE: `scripts/worktree-setup.sh` hand-rolls `git worktree add` + manual settings/scripts copies; the native `worktree.baseRef` + `.worktreeinclude` config now do this — the script is slated for retirement or reduction to a thin wrapper (§4 of the contract).
 
 ## Quick Reference
 
