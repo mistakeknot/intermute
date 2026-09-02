@@ -60,6 +60,8 @@ Notes:
 - `GET /api/inbox/{agent}?since_cursor=...&limit=...` -- Fetch inbox
 - `GET /api/inbox/{agent}/counts` -- Inbox total/unread counts
 - `GET /api/inbox/{agent}/stale-acks?ttl_seconds=...&limit=...` -- Ack-required messages past TTL
+- `GET /api/inbox/pokes?project=...&agent=...` -- List pending peer pokes (deferred live-delivery notifications)
+- `POST /api/inbox/pokes/{message_id}/ack?project=...&agent=...` -- Mark a poke as surfaced
 - `POST /api/messages/{id}/ack` -- Acknowledge message (body: `{"agent": "..."}`)
 - `POST /api/messages/{id}/read` -- Mark as read (body: `{"agent": "..."}`)
 - `POST /api/broadcast` -- Broadcast to all project agents (rate-limited: 10/min/sender)
@@ -76,6 +78,12 @@ Notes:
 - `GET /api/reservations?project=...` or `?agent=...` -- List active reservations
 - `GET /api/reservations/check?project=...&pattern=...&exclusive=...` -- Check conflicts without creating
 - `DELETE /api/reservations/{id}` -- Release reservation (agent must match)
+
+## Window Identity
+
+- `GET /api/windows?project=...` -- List window identities for a project
+- `POST /api/windows` -- Upsert a window identity (body: `project`, `window_uuid`, `agent_id`, `display_name`, optional `tmux_target`, `registration_token`)
+- `DELETE /api/windows/{window_uuid}?project=...` -- Expire a window identity
 
 ## Domain (specs/epics/stories/tasks/insights/sessions/cujs)
 

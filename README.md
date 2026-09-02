@@ -18,15 +18,26 @@ Or as a systemd service for persistent operation.
 
 ## API
 
-| Endpoint | What it does |
+Full reference with request/response shapes: [docs/api.md](docs/api.md).
+
+| Route family | What it does |
 |----------|-------------|
-| `POST /api/agents` | Register an agent |
-| `GET /api/agents?project=...` | List agents in a project |
-| `POST /api/agents/{id}/heartbeat` | Keep-alive signal |
-| `POST /api/messages` | Send a message |
-| `GET /api/inbox/{agent}?since_cursor=...` | Fetch messages (cursor-based pagination) |
-| `POST /api/messages/{id}/ack` | Acknowledge receipt |
-| `POST /api/messages/{id}/read` | Mark as read |
+| `GET /health` | Health check, including storage liveness |
+| `POST /api/agents`, `GET /api/agents` | Register / list agents in a project |
+| `GET /api/agents/presence` | Compact "who's working on what" read model |
+| `POST /api/agents/{id}/heartbeat`, `PATCH /api/agents/{id}/metadata`, `.../policy` | Keep-alive, metadata merge, contact policy |
+| `POST /api/messages` | Send a message (to/cc/bcc, topic, ack_required) |
+| `POST /api/messages/{id}/ack`, `.../read` | Acknowledge / mark a message read |
+| `GET /api/inbox/{agent}` | Fetch inbox (cursor-based pagination) |
+| `GET /api/inbox/{agent}/counts`, `.../stale-acks` | Inbox counts / overdue acks |
+| `GET /api/threads` | List and fetch message threads |
+| `GET /api/topics/{project}/{topic}` | Topic-based message discovery |
+| `POST /api/broadcast` | Broadcast to all agents in a project |
+| `POST /api/reservations`, `GET /api/reservations` | Create / list file reservations |
+| `GET /api/reservations/check` | Check for conflicts without reserving |
+| `DELETE /api/reservations/{id}` | Release a reservation |
+| `GET /api/windows`, `POST /api/windows`, `DELETE /api/windows/{id}` | tmux window identity: list, upsert, expire |
+| `/api/specs`, `/api/epics`, `/api/stories`, `/api/tasks`, `/api/insights`, `/api/sessions`, `/api/cujs` | Domain entity CRUD (list/create/get/update/delete) |
 | `WS /ws/agents/{id}` | Real-time message delivery |
 
 ## Auth
