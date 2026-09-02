@@ -11,8 +11,8 @@ this release makes the repo usable standalone.
 
 ### Added
 
-- `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md` (Contributor Covenant
-  2.1), GitHub issue/PR templates.
+- `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`
+  (Contributor Covenant 2.1), GitHub issue/PR templates.
 - `intermute version` subcommand and a `--version` flag on the root
   command, both reporting the same build-time-settable version.
 - `docs/api.md`: every REST + WebSocket route documented, including the

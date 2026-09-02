@@ -40,5 +40,5 @@ Go 1.24 (toolchain `go1.24.12`), SQLite (modernc.org/sqlite), nhooyr WebSocket, 
 cmd/intermute/    Entry point, CLI flags, component wiring
 client/           Go SDK (messaging, domain CRUD, WebSocket)
 internal/         auth/, core/ (domain types), glob/ (NFA overlap), http/ (handlers+routers), storage/ (Store interfaces + sqlite/), ws/ (WebSocket hub), server/ (dual-listen), names/ (ship name gen)
-pkg/embedded/     Embeddable server for in-process use (Autarch uses this)
+pkg/embedded/     Embeddable server for in-process use by other Go services
 ```

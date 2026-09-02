@@ -21,7 +21,7 @@ L1 (core) multi-agent coordination and messaging service for this project's ecos
 
 | Topic | File | Covers |
 |-------|------|--------|
-| Architecture | [agents/architecture.md](agents/architecture.md) | Stack, request flow, database design (16 tables), authentication, directory structure |
+| Architecture | [agents/architecture.md](agents/architecture.md) | Stack, request flow, database design (19 tables), authentication, directory structure |
 | API Reference | [docs/api.md](docs/api.md) | All REST + WebSocket endpoints: agents, messaging, threads, reservations, windows, domain CRUD |
 | Data Model | [agents/data-model.md](agents/data-model.md) | Core types (Agent, Message, Event, Reservation), domain types (Spec, Epic, Story, Task, CUJ), contact policy |
 | Live Transport | [docs/live-transport.md](docs/live-transport.md) | tmux injection flow, hooks, focus/policy rules, residual risks, feature-flag rollback |

@@ -8,7 +8,7 @@
 
 - `POST /api/agents` -- Register agent (auto-generates Culture ship name if none provided)
 - `GET /api/agents?project=...&capability=...` -- List agents (filter by capability, comma-separated)
-- `GET /api/agents/presence?repo=...&active_bead_id=...` -- Compact presence read model for agents working in a repo and/or on a Beads issue
+- `GET /api/agents/presence?repo=...&active_bead_id=...` -- Compact presence read model for agents working in a repo and/or on a Beads issue ([beads](https://github.com/steveyegge/beads) issue IDs)
 - `POST /api/agents/{id}/heartbeat` -- Update last_seen
 - `PATCH /api/agents/{id}/metadata` -- Merge metadata keys (PATCH semantics: incoming keys overwrite, absent keys preserved)
 - `GET /api/agents/{id}/policy` -- Get contact policy

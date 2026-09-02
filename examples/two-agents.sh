@@ -19,6 +19,11 @@ cd "$REPO_ROOT"
 # Keep the generated dev key out of the repo directory.
 export INTERMUTE_KEYS_FILE="${TMPDIR_RUN}/intermute.keys.yaml"
 
+if curl -sf "${BASE}/health" >/dev/null 2>&1; then
+  echo "something already answers on ${BASE}; this script wants a fresh server. Set PORT to a free port." >&2
+  exit 1
+fi
+
 echo "==> starting: go run ./cmd/intermute serve --db $DB --port $PORT"
 go run ./cmd/intermute serve --db "$DB" --port "$PORT" &
 SERVER_PID=$!
@@ -47,6 +52,10 @@ for _ in $(seq 1 100); do
 done
 if [[ "$up" -ne 1 ]]; then
   echo "server never came up on ${BASE}" >&2
+  exit 1
+fi
+if ! pgrep -f "serve --db ${DB} --port ${PORT}" >/dev/null 2>&1; then
+  echo "health answered on ${BASE} but this script's server is not running; another process owns the port" >&2
   exit 1
 fi
 

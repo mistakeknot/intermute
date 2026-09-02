@@ -15,22 +15,12 @@
 
 ## Downstream Dependencies
 
-| Consumer | Uses | Monorepo Location |
-|----------|------|-------------------|
-| Autarch | `pkg/embedded/`, domain API, core types | `apps/autarch` |
-
-**After pushing changes to:**
-- `pkg/embedded/` -- Autarch embeds this server
-- `internal/core/domain.go` -- Domain types used by Autarch client
-- `internal/http/handlers_domain.go` -- API endpoints Autarch calls
-- `internal/storage/sqlite/schema.sql` -- Schema changes
-
-**Notify downstream:**
-```bash
-cd ~/projects/apps/autarch
-go get github.com/mistakeknot/intermute@latest
-go build ./cmd/autarch/  # Verify it compiles
-```
+`pkg/embedded/` is imported by services that embed this server, and the
+domain types in `internal/core/domain.go`, the handlers in
+`internal/http/handlers_domain.go`, and `internal/storage/sqlite/schema.sql`
+are the surface those consumers depend on. A change to any of them is an
+API change: bump the version in `cmd/intermute/main.go`, add a
+`CHANGELOG.md` entry, and tag.
 
 ## Testing
 

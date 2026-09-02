@@ -11,3 +11,4 @@ intermute.keys.yaml
 .tldrs/
 .tldrsignore
 cmd/intermute/intermute
+/intermute

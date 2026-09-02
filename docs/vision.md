@@ -4,8 +4,8 @@ Intermute is the backend coordination service for multi-agent systems. It provid
 
 **Module:** `github.com/mistakeknot/intermute`  
 **Go version:** `1.24`  
-**Last updated:** `2026-02-15`  
-**Service maturity:** `0.0.x` (development-stage, API shape is stable and operational)
+**Last updated:** `2026-09-01`  
+**Service maturity:** `0.1.x` (first tagged release; API shape is stable and operational)
 
 ## Why file coordination matters
 

@@ -11,7 +11,7 @@ go run ./cmd/intermute serve --host 0.0.0.0 --port 7338 --db ./intermute.db \
   --socket /var/run/intermute.sock --coordination-dual-write
 
 # Initialize auth keys for a project
-go run ./cmd/intermute init --project autarch --keys-file ./intermute.keys.yaml
+go run ./cmd/intermute init --project myproject --keys-file ./intermute.keys.yaml
 
 # Run tests
 go test ./...

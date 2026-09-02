@@ -1,5 +1,4 @@
-# demarch-managed: secret-scan-baseline v1
-title = "Demarch Secret Scanning Baseline"
+title = "intermute secret scanning baseline"
 
 [extend]
 useDefault = true
