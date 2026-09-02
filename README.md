@@ -4,17 +4,40 @@ Multi-agent coordination service: the backend that makes agents aware of each ot
 
 ## What this does
 
-When multiple agents work on the same project, they need to know who's editing what, pass messages, and avoid stepping on each other's changes. intermute provides the coordination layer: agent registration with heartbeats, message routing, and file reservation tracking. It's a Go service backed by SQLite, exposing a REST API with WebSocket real-time delivery.
+When multiple agents work on the same project, they need to know who's editing what, pass messages, and avoid stepping on each other's changes. intermute is the coordination layer: agent registration with heartbeats, file reservations with conflict detection, message routing, and window identity tracking. It's a Go service backed by SQLite, exposing a REST API with WebSocket real-time delivery.
 
-interlock (the Claude Code plugin) wraps intermute with MCP tools, hooks, and git enforcement. Most users interact with interlock; intermute is the engine underneath.
+interlock (the Claude Code plugin) wraps intermute with MCP tools, hooks, and git enforcement. Most users interact with interlock; intermute is the engine underneath, and it also works standalone behind any MCP client or a plain HTTP client.
 
-## Run
+## Why intermute
+
+- **Glob-overlap reservations with bounded cost.** File reservations use glob patterns (`src/**/*.go`), and conflict detection compares every pattern pair. `internal/glob` caps pattern complexity (`MaxTokens`, `MaxWildcards`) and is fuzz-tested so every comparison stays cheap regardless of input.
+- **A resilience layer with a named wedge test.** Reservation writes and the background sweeper used to contend for SQLite's rollback-journal lock and wedge the server with `SQLITE_BUSY`. WAL mode plus a busy timeout fixed it; `TestNewStoreAvoidsSQLITEBUSYUnderConcurrentWrites` reproduces that concurrency pattern so it stays fixed.
+- **Wake a peer over tmux, not just polling.** With `transport: "live"`, a message is pasted directly into the recipient's tmux pane when it's at a prompt, instead of waiting on the next inbox poll.
+
+## Install
 
 ```bash
-go run ./cmd/intermute    # Starts on :7338
+go install github.com/mistakeknot/intermute/cmd/intermute@latest
+intermute serve                                    # starts on :7338
+intermute serve --db /path/to/intermute.db --port 7338
 ```
 
-Or as a systemd service for persistent operation.
+## Quick start
+
+`examples/two-agents.sh` runs the walkthrough below end to end against a fresh server on a temp database, and cleans up after itself:
+
+```bash
+./examples/two-agents.sh
+```
+
+What it does:
+
+1. Registers two agents, alpha and beta.
+2. alpha reserves `src/**/*.go` exclusively.
+3. beta calls `/api/reservations/check` on the same pattern and sees the conflict.
+4. beta messages alpha asking for the file.
+5. alpha reads its inbox, then releases the reservation.
+6. beta reserves the now-free pattern.
 
 ## API
 
@@ -58,7 +81,7 @@ INTERMUTE_AGENT_NAME=...     # Optional override
 ## Testing
 
 ```bash
-go test ./...
+go build ./... && go vet ./... && go test -race ./...
 ```
 
 ## License

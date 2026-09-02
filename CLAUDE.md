@@ -6,7 +6,7 @@
 ## Quick Commands
 
 ```bash
-go run ./cmd/intermute   # Run server on :7338
+go run ./cmd/intermute serve   # Run server on :7338
 go test ./...            # Run all tests
 ```
 
