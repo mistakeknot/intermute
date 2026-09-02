@@ -1,6 +1,6 @@
 # Intermute Vision and Philosophy
 
-Intermute is the backend coordination service for multi-agent systems in the Interverse constellation. It provides deterministic, project-scoped coordination for files, messages, and agent tasks using a small, HTTP-first API and real-time WebSocket eventing.
+Intermute is the backend coordination service for multi-agent systems. It provides deterministic, project-scoped coordination for files, messages, and agent tasks using a small, HTTP-first API and real-time WebSocket eventing.
 
 **Module:** `github.com/mistakeknot/intermute`  
 **Go version:** `1.24`  
@@ -50,7 +50,7 @@ Agents issue commands via HTTP and observe state changes through broadcast event
 
 ### 6) Observable coordination
 
-Every reservation, message, and heartbeat produces a durable event. Coordination failures — conflicts, stale locks, missed heartbeats — are the highest-signal data for agent quality (PHILOSOPHY.md: instrument first, optimize later). Intermute events feed Interspect's coordination quality analysis.
+Every reservation, message, and heartbeat produces a durable event. Coordination failures — conflicts, stale locks, missed heartbeats — are the highest-signal data for agent quality: instrument first, optimize later.
 
 ## Current risk envelope
 

@@ -34,7 +34,7 @@ Response:
       "kind": "claude-code",
       "status": "active",
       "last_seen": "2026-04-29T20:58:00Z",
-      "repo": "/home/mk/projects/Sylveste/core/intermute",
+      "repo": "~/projects/Sylveste/core/intermute",
       "files": ["internal/http/handlers_agents.go"],
       "objective": "Add bead presence read model",
       "confidence": "reported",

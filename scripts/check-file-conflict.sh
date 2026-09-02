@@ -16,7 +16,7 @@ fi
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 FILE_PATH="${FILE_PATH#${REPO_ROOT}/}"
 
-# Get in-progress beads
+# Get in-progress beads (beads issue IDs: https://github.com/steveyegge/beads)
 BEADS_OUTPUT=$(bd list --status=in_progress 2>/dev/null || echo "")
 if [[ -z "$BEADS_OUTPUT" ]]; then
     exit 0  # No in-progress beads, no conflicts

@@ -27,7 +27,7 @@
 
 **Notify downstream:**
 ```bash
-cd /home/mk/projects/Demarch/apps/autarch
+cd ~/projects/apps/autarch
 go get github.com/mistakeknot/intermute@latest
 go build ./cmd/autarch/  # Verify it compiles
 ```

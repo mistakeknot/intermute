@@ -1,11 +1,9 @@
 # AGENTS.md -- Intermute
 
-L1 (core) multi-agent coordination and messaging service for the Demarch platform. Handles agent lifecycle (registration, heartbeats, contact policies), project-scoped messaging with threading and topic discovery, file reservations with glob-based conflict detection, and event sourcing of domain entities (specs, epics, stories, tasks, insights, sessions, CUJs). Central hub for multi-agent orchestration with REST + WebSocket + optional Unix socket delivery.
+L1 (core) multi-agent coordination and messaging service for this project's ecosystem. Handles agent lifecycle (registration, heartbeats, contact policies), project-scoped messaging with threading and topic discovery, file reservations with glob-based conflict detection, and event sourcing of domain entities (specs, epics, stories, tasks, insights, sessions, CUJs). Central hub for multi-agent orchestration with REST + WebSocket + optional Unix socket delivery.
 
 ## Canonical References
-1. [`PHILOSOPHY.md`](../../PHILOSOPHY.md) -- direction for ideation and planning decisions.
-2. `CLAUDE.md` -- implementation details, architecture, testing, and release workflow.
-3. [Worktree-first coordination contract](../../docs/guide-worktree-first-coordination.md) -- canonical rules for worktrees. NOTE: `scripts/worktree-setup.sh` hand-rolls `git worktree add` + manual settings/scripts copies; the native `worktree.baseRef` + `.worktreeinclude` config now do this — the script is slated for retirement or reduction to a thin wrapper (§4 of the contract).
+1. `CLAUDE.md` -- implementation details, architecture, testing, and release workflow.
 
 ## Quick Reference
 
