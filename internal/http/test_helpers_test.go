@@ -26,7 +26,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatalf("sqlite: %v", err)
 	}
 	hub := ws.NewHub()
-	svc := NewDomainService(st).WithBroadcaster(hub)
+	svc := NewDomainService(st).WithBroadcaster(hub).WithPinger(st)
 	srv := httptest.NewServer(NewDomainRouter(svc, hub.Handler(), nil))
 	t.Cleanup(srv.Close)
 	return &testEnv{srv: srv, hub: hub, store: st}

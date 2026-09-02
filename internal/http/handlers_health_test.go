@@ -1,81 +1,50 @@
 package httpapi
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-type stubPinger struct{ err error }
+func TestHealthChecksStorageLiveness(t *testing.T) {
+	env := newTestEnv(t)
 
-func (s stubPinger) Ping(_ context.Context) error { return s.err }
-
-func TestHealthHandlerReturnsOKWhenDBHealthy(t *testing.T) {
-	h := newHealthHandler(stubPinger{err: nil})
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/health", nil)
-	h(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", w.Code)
+	resp := env.get(t, "/health")
+	requireStatus(t, resp, http.StatusOK)
+	okBody := decodeJSON[map[string]string](t, resp)
+	if okBody["status"] != "ok" {
+		t.Fatalf("expected healthy status ok, got %q", okBody["status"])
 	}
-	var body map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("body parse: %v", err)
-	}
-	if body["status"] != "ok" {
-		t.Errorf("status = %q, want %q", body["status"], "ok")
-	}
-}
 
-func TestHealthHandlerReturns503WhenDBFails(t *testing.T) {
-	h := newHealthHandler(stubPinger{err: errors.New("database is locked")})
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/health", nil)
-	h(w, r)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("status = %d, want 503", w.Code)
+	if err := env.store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
 	}
-	var body map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
-		t.Fatalf("body parse: %v", err)
-	}
-	if body["status"] != "degraded" {
-		t.Errorf("status = %q, want %q", body["status"], "degraded")
-	}
-	if body["error"] != "database is locked" {
-		t.Errorf("error = %q, want %q", body["error"], "database is locked")
-	}
-}
 
-func TestHealthHandlerDegradesGracefullyWithoutPinger(t *testing.T) {
-	// Pinger=nil is the back-compat path for tests/embedded setups that
-	// don't bother wiring a real store. Should keep returning legacy ok.
-	h := newHealthHandler(nil)
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/health", nil)
-	h(w, r)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200 (nil pinger should degrade to legacy ok)", w.Code)
+	resp = env.get(t, "/health")
+	requireStatus(t, resp, http.StatusServiceUnavailable)
+	unhealthyBody := decodeJSON[map[string]string](t, resp)
+	if unhealthyBody["status"] != "degraded" {
+		t.Fatalf("expected degraded status, got %q", unhealthyBody["status"])
+	}
+	if unhealthyBody["error"] == "" {
+		t.Fatalf("expected health failure to include error")
 	}
 }
 
 func TestHealthHandlerRejectsNonGET(t *testing.T) {
-	h := newHealthHandler(stubPinger{err: nil})
-
+	h := newHealthHandler(nil)
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/health", nil)
-	h(w, r)
-
+	h(w, httptest.NewRequest(http.MethodPost, "/health", nil))
 	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want 405", w.Code)
+		t.Fatalf("status = %d, want 405", w.Code)
+	}
+}
+
+func TestHealthHandlerWithoutPingerReportsOK(t *testing.T) {
+	h := newHealthHandler(nil)
+	w := httptest.NewRecorder()
+	h(w, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (nil pinger degrades to legacy ok)", w.Code)
 	}
 }
