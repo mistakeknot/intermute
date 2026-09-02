@@ -3,9 +3,9 @@
 *.sqlite
 intermute.keys.yaml
 
-# Auracoil
-.auracoil/cache/
-.auracoil/oracle/
+.auracoil/
+.clavain/
+.remote-source
 
 .beads/
 .tldrs/
