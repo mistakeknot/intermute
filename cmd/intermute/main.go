@@ -25,18 +25,36 @@ import (
 	"github.com/mistakeknot/intermute/internal/ws"
 )
 
+// version is the release version; set at build time with
+//
+//	go build -ldflags "-X main.version=x.y.z" ./cmd/intermute
+var version = "0.1.0"
+
 func main() {
 	root := &cobra.Command{
-		Use:   "intermute",
-		Short: "intermute - Agent coordination and domain API server",
+		Use:     "intermute",
+		Short:   "intermute - Agent coordination and domain API server",
+		Version: version,
 	}
 
 	root.AddCommand(serveCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(inboxCmd())
+	root.AddCommand(versionCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
+	}
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print the intermute version",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Printf("intermute %s\n", version)
+			return nil
+		},
 	}
 }
 
