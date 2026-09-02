@@ -513,11 +513,11 @@ func TestCUJHTTP(t *testing.T) {
 
 	t.Run("create", func(t *testing.T) {
 		resp := env.post(t, "/api/cujs", map[string]any{
-			"project":    project,
-			"spec_id":    specID,
-			"title":      "Onboarding Flow",
-			"persona":    "new-user",
-			"priority":   "high",
+			"project":     project,
+			"spec_id":     specID,
+			"title":       "Onboarding Flow",
+			"persona":     "new-user",
+			"priority":    "high",
 			"entry_point": "landing page",
 			"exit_point":  "dashboard",
 			"steps": []map[string]any{
