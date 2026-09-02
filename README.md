@@ -65,9 +65,9 @@ Full reference with request/response shapes: [docs/api.md](docs/api.md).
 
 ## Auth
 
-Localhost requests are allowed without authentication: useful for single-machine multi-agent setups. Non-localhost requires `Authorization: Bearer <key>` with a project scope.
+Loopback callers are trusted as members of the project: localhost requests need no key by default, and any local process can claim to be any agent by setting `X-Agent-ID`. An agent's identity is verified only when it also presents the token it got back from registering, as `X-Agent-Token`. Non-localhost requests always require `Authorization: Bearer <key>` with a project scope.
 
-Keys are loaded from `INTERMUTE_KEYS_FILE` or `./intermute.keys.yaml`. If neither exists, the server bootstraps a dev key on startup.
+Keys are loaded from `INTERMUTE_KEYS_FILE` or `./intermute.keys.yaml`. If neither exists, the server bootstraps a dev key on startup. On a shared host, set `allow_localhost_without_auth: false` in the keys file (see `intermute.keys.yaml.example`) and give every client a project key -- see [SECURITY.md](SECURITY.md) for the full trust boundary.
 
 ## Client environment
 

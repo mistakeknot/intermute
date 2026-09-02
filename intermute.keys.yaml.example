@@ -1,5 +1,6 @@
 default_policy:
   allow_localhost_without_auth: true
+  # allow_localhost_without_auth: false  # shared host: every caller, including localhost, must present a project bearer key
 
 projects:
   autarch:
